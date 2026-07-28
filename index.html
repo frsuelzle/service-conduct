@@ -691,7 +691,11 @@ function generateRange(startISO, endISO, settings, existing = []) {
   const keep = existing.filter(s =>
     s.date < startISO || s.date > endISO || s.locked || s.special || s.deleted
   );
-  const keptKey = new Set(keep.map(s => `${s.date}|${s.time}|${s.name}`));
+  /* Keyed by date+time only, not name — a kept service occupies that slot
+     regardless of what it's currently called, including after being renamed
+     through the edit dialog. Keying on name too would let the generator
+     build a second, duplicate entry under the template's original name. */
+  const keptKey = new Set(keep.map(s => `${s.date}|${s.time}`));
 
   const state = seedState(makeState(settings), existing, startISO, settings);
   const built = [];
@@ -703,7 +707,7 @@ function generateRange(startISO, endISO, settings, existing = []) {
       const day = addDays(sunday, tpl.dow);
       const dISO = iso(day);
       if (dISO < startISO || dISO > endISO) continue;
-      const k = `${dISO}|${tpl.time}|${tpl.name}`;
+      const k = `${dISO}|${tpl.time}`;
       if (keptKey.has(k)) continue;
       const assign = week[`${tpl.dow}-${tpl.time}`] || {};
       built.push({
@@ -1420,6 +1424,7 @@ function renderWeek() {
             ${s.special ? '<span class="tag">Added</span>' : ''}
             ${s.locked ? '<span class="tag">Kept</span>' : ''}
             <span class="rowacts">
+              <button class="tinybtn" data-editsvc="${s.id}">Edit</button>
               <button class="tinybtn${s.locked ? ' on' : ''}" data-lock="${s.id}"
                 title="Keep this service exactly as it is when the schedule is refilled">
                 ${s.locked ? 'Kept' : 'Keep'}</button>
@@ -1667,29 +1672,42 @@ function openDlg(title, body, foot) {
 }
 
 /* ----- add a service ----- */
-function openAdd(dateISO) {
-  const d = dateISO || iso(App.cursor);
-  openDlg('Add a service', `
+function openAdd(dateISO, editId) {
+  const existing = editId ? svc(editId) : null;
+  const editing = !!existing;
+  const d = editing ? existing.date : (dateISO || iso(App.cursor));
+  const t = editing ? existing.time : '18:30';
+  const n = editing ? existing.name : 'Divine Service — Feast';
+
+  openDlg(editing ? 'Edit service' : 'Add a service', `
     <div class="grp2">
       <div class="fld"><label for="asDate">Date</label>
         <input type="date" id="asDate" value="${d}"></div>
       <div class="fld"><label for="asTime">Time</label>
-        <input type="time" id="asTime" value="18:30"></div>
+        <input type="time" id="asTime" value="${t}"></div>
     </div>
     <div class="lit-suggest" id="asLit"></div>
     <div class="fld"><label for="asName">Service</label>
-      <input type="text" id="asName" list="svcNames" value="Divine Service — Feast">
-      <datalist id="svcNames">${SERVICE_NAMES.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <input type="text" id="asName" list="svcNames" value="${esc(n)}">
+      <datalist id="svcNames">${SERVICE_NAMES.map(x => `<option value="${esc(x)}">`).join('')}</datalist>
     </div>
     <div class="fld"><label>Roles to fill</label>
       <div class="rolechk">
-        ${ROLES.map(r => `<label><input type="checkbox" class="asRole" value="${r}"
-          ${(r === 'deacon' || r === 'subdeacon') ? '' : 'checked'}>${ROLE_LABEL[r]}</label>`).join('')}
+        ${ROLES.map(r => {
+          const checked = editing ? existing.roles.includes(r) : (r !== 'deacon' && r !== 'subdeacon');
+          return `<label><input type="checkbox" class="asRole" value="${r}"
+            ${checked ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`;
+        }).join('')}
       </div>
-      <div class="hint">Assign the men after you add it, in the week view.</div>
-    </div>`,
+      <div class="hint">${editing
+        ? 'Unchecking a role clears its assignment. Checking a new one leaves it open to fill below.'
+        : 'Assign the men after you add it, in the week view.'}</div>
+    </div>
+    ${editing && !existing.special ? `<div class="hint" style="margin-top:-6px">
+      This is a regular service from the weekly pattern. Saving changes keeps this one
+      occurrence exactly as you set it — refilling the schedule later won't touch it.</div>` : ''}`,
     `<button class="btn2" data-close>Cancel</button>
-     <button class="btn2 gold" id="asSave">Add service</button>`);
+     <button class="btn2 gold" id="asSave">${editing ? 'Save changes' : 'Add service'}</button>`);
 
   const refreshLit = () => {
     const box = el('asLit');
@@ -1708,15 +1726,30 @@ function openAdd(dateISO) {
   el('asDate').addEventListener('change', refreshLit);
   refreshLit();
 
-  el('asSave').onclick = () => {
+  el('asSave').onclick = async () => {
     const date = el('asDate').value, time = el('asTime').value;
     const name = el('asName').value.trim() || 'Service';
     const roles = [...document.querySelectorAll('.asRole:checked')].map(c => c.value);
     if (!date || !time || !roles.length) {
       toast('A date, a time, and at least one role are needed.'); return;
     }
-    const y = Number(date.slice(0, 4));
-    ensureYears([y]).then(() => {
+    const newYear = Number(date.slice(0, 4));
+    await ensureYears([newYear]);
+
+    if (editing) {
+      const oldYear = yearOf(existing);
+      const newAssign = {};
+      roles.forEach(r => { newAssign[r] = (existing.assign && existing.assign[r]) || null; });
+      existing.date = date; existing.time = time; existing.name = name;
+      existing.roles = roles; existing.assign = newAssign;
+      existing.locked = true;
+      App.services.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+      markDirty([...new Set([oldYear, newYear])]);
+      App.cursor = fromISO(date);
+      App.view = 'week';
+      closeAll(); render();
+      toast(`Updated ${esc(name)}.`);
+    } else {
       App.services.push({
         id: `sp-${date}-${time.replace(':','')}-${Math.random().toString(36).slice(2,7)}`,
         date, time, name, roles,
@@ -1724,12 +1757,12 @@ function openAdd(dateISO) {
         locked: true, special: true,
       });
       App.services.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
-      markDirty([y]);
+      markDirty([newYear]);
       App.cursor = fromISO(date);
       App.view = 'week';
       closeAll(); render();
       toast(`Added ${esc(name)} on ${date}. Assign the men below.`);
-    });
+    }
   };
 }
 
@@ -2081,6 +2114,8 @@ document.addEventListener('click', e => {
   if (del) { removeService(del.dataset.del); return; }
   const add = t.closest('[data-add]');
   if (add) { openAdd(add.dataset.add); return; }
+  const editSvc = t.closest('[data-editsvc]');
+  if (editSvc) { openAdd(null, editSvc.dataset.editsvc); return; }
 
   if (t.closest('[data-restoreweek]')) {
     const days = Array.from({ length: 7 }, (_, i) => iso(addDays(startOfWeek(App.cursor), i)));
