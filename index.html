@@ -459,6 +459,7 @@ const DEFAULT_SETTINGS = {
   alternationAnchor: 0,  // 0 → Fr. Leigeber has the first Sunday of the epoch week
   capLeckbandToInterval: true,
   eveningPrayerPrefersJuniors: true,
+  eveningPrayerWeights: { LG: 20, SU: 20, LK: 30, LH: 30 },
   noSundayPreaching: ['LH'],
 };
 
@@ -497,12 +498,27 @@ function effectiveTargets(settings) {
   return eff;
 }
 
+/* Evening Prayer's own weighted rotation. Juniors are favored by default
+   (it's the one service they may lead), but this is a soft weighting, not
+   the all-or-nothing pool restriction the interval-based rules use — so
+   the other two men still turn up regularly instead of never at all. */
+function eveningPrayerTargets(settings) {
+  const w = settings.eveningPrayerPrefersJuniors
+    ? settings.eveningPrayerWeights
+    : { LG: 25, SU: 25, LK: 25, LH: 25 };
+  const sum = PIDS.reduce((s, p) => s + (w[p] || 0), 0) || 1;
+  return Object.fromEntries(PIDS.map(p => [p, (w[p] || 0) / sum]));
+}
+
 function makeState(settings) {
   return {
     target: effectiveTargets(settings),
+    epTarget: eveningPrayerTargets(settings),
     sermons: Object.fromEntries(PIDS.map(p => [p, 0])),
     celebrantDuty: Object.fromEntries(PIDS.map(p => [p, 0])),
     deaconDuty: Object.fromEntries(PIDS.map(p => [p, 0])),
+    eveningPrayerDuty: Object.fromEntries(PIDS.map(p => [p, 0])),
+    totalEP: 0,
     totalSermons: 0,
     lastLeckbandWeek: -Infinity,
     lastSundayDeacon: null,
@@ -529,8 +545,17 @@ function seedState(state, services, beforeISO, settings) {
         state.deaconDuty[a.deacon]++;
         if (fromISO(s.date).getDay() === 0) state.lastSundayDeacon = a.deacon;
       }
+      if (s.name === 'Evening Prayer' && a.celebrant) {
+        state.eveningPrayerDuty[a.celebrant]++;
+        state.totalEP++;
+      }
     });
   return state;
+}
+
+/* Largest-deficit choice, scoped to Evening Prayer's own rotation. */
+function epDeficit(state, p) {
+  return state.epTarget[p] * (state.totalEP + 1) - state.eveningPrayerDuty[p];
 }
 
 /* Largest-deficit choice: keeps the running distribution pinned to the weights. */
@@ -621,18 +646,22 @@ function assignWeek(state, sunday, settings) {
   state.deaconDuty[wed.deacon]++;
 
   /* 4. Wednesday Evening Prayer — one man liturgises and preaches.
-        This is the only service the junior men may liturgise, so by default
-        it is offered to them first. */
-  let epPool = PIDS;
-  if (settings.eveningPrayerPrefersJuniors) {
-    const juniors = ['LK', 'LH'].filter(p =>
-      canPreach(state, weekPreach, weekIdx, p, {}, settings));
-    if (juniors.length) epPool = juniors;
-  }
-  const ep = bestPreacher(state, weekPreach, weekIdx, epPool, {}, settings);
+        Juniors are favored (it's the one service they may lead), but as a
+        weighted preference across all four, not a pool that excludes the
+        other two — otherwise this slot just alternates between two men
+        forever instead of genuinely rotating. */
+  const epCands = PIDS.filter(p => canPreach(state, weekPreach, weekIdx, p, {}, settings));
+  const epPool = epCands.length ? epCands : PIDS;
+  const ep = epPool.slice().sort((a, b) =>
+    (epDeficit(state, b) - epDeficit(state, a)) ||
+    (state.eveningPrayerDuty[a] - state.eveningPrayerDuty[b]) ||
+    (PIDS.indexOf(a) - PIDS.indexOf(b))
+  )[0];
   out['3-18:30'] = { celebrant: ep, preacher: ep };
   recordSermon(state, weekPreach, weekIdx, ep);
   state.celebrantDuty[ep]++;
+  state.eveningPrayerDuty[ep]++;
+  state.totalEP++;
 
   /* 5. Monday and Friday Matins. */
   for (const dow of [1, 5]) {
@@ -1848,9 +1877,10 @@ function openSettings() {
       <span class="sub">On: the interval wins and his unused share goes to the others.
       Off: his percentage wins and he preaches more often.</span></span></label>
     <label class="swtch"><input type="checkbox" id="stEp" ${s.eveningPrayerPrefersJuniors ? 'checked' : ''}>
-      <span>Give Evening Prayer to Fr. Leckband and Fr. Lehman first
-      <span class="sub">The one service they may liturgise. On, it lifts about 26 services a
-      year off Fr. Leigeber and Fr. Suelzle each.</span></span></label>
+      <span>Favor Fr. Leckband and Fr. Lehman for Evening Prayer
+      <span class="sub">The one service they may liturgise. On, they get the larger share of
+      it (roughly 60%) with Fr. Leigeber and Fr. Suelzle still rotating in regularly — not
+      excluded, just less often. Off, all four rotate through evenly.</span></span></label>
 
     <div class="divider-l">Sunday rotation</div>
     <div class="fld"><label for="stAnchor">Celebrant this Sunday (${iso(W)})</label>
