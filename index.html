@@ -541,7 +541,8 @@ function deficit(state, p) {
 function canPreach(state, weekPreach, weekIdx, p, opts, settings) {
   if (opts.sunday && settings.noSundayPreaching.includes(p)) return false;
   if ((weekPreach[p] || 0) >= settings.maxSermonsPerWeek) return false;
-  if (p === 'LK' && weekIdx - state.lastLeckbandWeek < settings.leckbandInterval) return false;
+  if (p === 'LK' && settings.capLeckbandToInterval &&
+      weekIdx - state.lastLeckbandWeek < settings.leckbandInterval) return false;
   return true;
 }
 
