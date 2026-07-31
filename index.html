@@ -139,17 +139,12 @@
            font-size:11px;padding:3px 8px;color:var(--mute)}
   .tinybtn:hover{background:#E7E4DC;color:var(--ink)}
   .tinybtn.on{background:var(--brass);border-color:var(--brass);color:#fff}
-  .slots{display:flex;flex-wrap:wrap;gap:9px}
-  .slot{display:flex;flex-direction:column;gap:3px;min-width:158px}
-  .slot label{font-family:var(--font-mono);font-size:9px;letter-spacing:.13em;
-              text-transform:uppercase;color:var(--mute)}
-  .slot select{padding:6px 8px;border:1px solid var(--rule);border-radius:5px;
-               background:var(--sheet);cursor:pointer}
-  .slot select:hover{border-color:#C9C6BD}
-  .slot[data-p=LG] select{border-left:3px solid var(--lg)}
-  .slot[data-p=SU] select{border-left:3px solid var(--su)}
-  .slot[data-p=LK] select{border-left:3px solid var(--lk)}
-  .slot[data-p=LH] select{border-left:3px solid var(--lh)}
+  .wkmen{display:flex;flex-wrap:wrap;gap:6px;cursor:pointer;padding:4px;margin:-4px;
+         border-radius:6px}
+  .wkmen:hover{background:#F4F2EC}
+  .wkmen .chip{font-size:12px}
+  .wkmen .chip .who{padding:4.5px 6px}
+  .wkmen .chip .rl{padding:3.5px 6px;font-size:10.5px}
   .notewrap{margin-top:9px}
   .noteinput{width:100%;min-height:30px;padding:6px 9px;border:1px solid var(--rule);
              border-radius:5px;background:var(--sheet);font-family:inherit;font-size:12.5px;
@@ -248,8 +243,14 @@
   .lit-suggest button{background:none;border:1px solid var(--rule);border-radius:4px;
                       padding:3px 8px;font-size:11px;cursor:pointer;margin-top:5px;color:var(--mute)}
   .lit-suggest button:hover{background:#fff;color:var(--ink)}
-  .rolechk{display:flex;gap:14px;flex-wrap:wrap;font-size:13px}
-  .rolechk label{display:flex;gap:6px;align-items:center;cursor:pointer}
+  .roleassign{display:flex;flex-direction:column;gap:8px}
+  .rarow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .racheck{display:flex;gap:7px;align-items:center;cursor:pointer;font-size:13px;
+           min-width:170px;flex:0 0 auto}
+  .raselect{flex:1 1 180px;min-width:180px;padding:6px 8px;border:1px solid var(--rule);
+            border-radius:5px;background:var(--sheet);cursor:pointer}
+  .raselect:hover{border-color:#C9C6BD}
+  .raselect:disabled{opacity:.45;cursor:default;background:#F1EFE9}
   .grp2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
   .wrow{display:grid;grid-template-columns:1fr 74px;gap:9px;align-items:center;margin-bottom:8px;
         font-size:13px}
@@ -308,7 +309,8 @@
     .cell{border:1px solid var(--rule);border-radius:6px;min-height:0}
     .cell.out{display:none}
     .row{grid-template-columns:64px 1fr}
-    .slot{min-width:100%}
+    .racheck{min-width:100%}
+    .raselect{min-width:100%}
 
     /* Header: instead of letting everything wrap wherever it happens to fit,
        give each group its own full-width row, in a fixed, predictable order.
@@ -1370,8 +1372,8 @@ function renderWeek() {
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const todayISO = iso(new Date());
   let h = `<div class="sect-h"><h2>Week of ${MONTHS[start.getMonth()]} ${start.getDate()}</h2>
-    <span class="note">Change any dropdown to override. Overridden services are kept when you
-    refill the schedule.</span></div><div class="wk">`;
+    <span class="note">Initials name the pastor; the letters after them are his roles.
+    Choose Edit to change who's serving.</span></div><div class="wk">`;
 
   for (const d of days) {
     const ds = iso(d), list = onDate(ds), isToday = ds === todayISO;
@@ -1405,16 +1407,9 @@ function renderWeek() {
               <button class="tinybtn" data-del="${s.id}">Remove</button>
             </span>
           </div>
-          <div class="slots">${s.roles.map(r => {
-            const cur = (s.assign && s.assign[r]) || '';
-            return `<div class="slot" data-p="${cur}">
-              <label for="sel-${s.id}-${r}">${ROLE_LABEL[r]}</label>
-              <select id="sel-${s.id}-${r}" data-svc="${s.id}" data-role="${r}">
-                <option value=""${cur ? '' : ' selected'}>— not assigned —</option>
-                ${PASTORS.map(p => `<option value="${p.id}"${cur === p.id ? ' selected' : ''}>
-                  ${p.name}</option>`).join('')}
-              </select></div>`;
-          }).join('')}</div>
+          <div class="wkmen" data-editsvc="${s.id}" title="Choose to edit who's serving">
+            ${chipsFor(s)}
+          </div>
           <div class="notewrap">
             <textarea class="noteinput${s.notes ? ' has' : ''}" data-svc="${s.id}"
               placeholder="Add a note for the team…" rows="1">${esc(s.notes || '')}</textarea>
@@ -1572,16 +1567,6 @@ function renderLegend() {
 function svc(id) { return App.services.find(s => s.id === id); }
 const yearOf = s => Number(s.date.slice(0, 4));
 
-function onChangeAssign(id, role, val) {
-  const s = svc(id);
-  if (!s) return;
-  s.assign = s.assign || {};
-  s.assign[role] = val || null;
-  s.locked = true;
-  markDirty([yearOf(s)]);
-  render();
-}
-
 function toggleLock(id) {
   const s = svc(id);
   s.locked = !s.locked;
@@ -1628,6 +1613,7 @@ function openDlg(title, body, foot) {
 }
 
 /* ----- add a service ----- */
+/* ----- add or edit a service ----- */
 function openAdd(dateISO, editId) {
   const existing = editId ? svc(editId) : null;
   const editing = !!existing;
@@ -1647,23 +1633,35 @@ function openAdd(dateISO, editId) {
       <input type="text" id="asName" list="svcNames" value="${esc(n)}">
       <datalist id="svcNames">${SERVICE_NAMES.map(x => `<option value="${esc(x)}">`).join('')}</datalist>
     </div>
-    <div class="fld"><label>Roles to fill</label>
-      <div class="rolechk">
+    <div class="fld"><label>Roles &amp; who's serving</label>
+      <div class="roleassign">
         ${ROLES.map(r => {
           const checked = editing ? existing.roles.includes(r) : (r !== 'deacon' && r !== 'subdeacon');
-          return `<label><input type="checkbox" class="asRole" value="${r}"
-            ${checked ? 'checked' : ''}>${ROLE_LABEL[r]}</label>`;
+          const cur = editing ? (existing.assign && existing.assign[r]) || '' : '';
+          return `<div class="rarow">
+            <label class="racheck"><input type="checkbox" class="asRole" value="${r}"
+              data-role="${r}" ${checked ? 'checked' : ''}>${ROLE_LABEL[r]}</label>
+            <select class="raselect" data-role="${r}" ${checked ? '' : 'disabled'}>
+              <option value=""${cur ? '' : ' selected'}>— not assigned —</option>
+              ${PASTORS.map(p => `<option value="${p.id}"${cur === p.id ? ' selected' : ''}>
+                ${p.name}</option>`).join('')}
+            </select>
+          </div>`;
         }).join('')}
       </div>
-      <div class="hint">${editing
-        ? 'Unchecking a role clears its assignment. Checking a new one leaves it open to fill below.'
-        : 'Assign the men after you add it, in the week view.'}</div>
+      <div class="hint">Uncheck a role to remove it from this service.</div>
     </div>
     ${editing && !existing.special ? `<div class="hint" style="margin-top:-6px">
       This is a regular service from the weekly pattern. Saving changes keeps this one
       occurrence exactly as you set it — refilling the schedule later won't touch it.</div>` : ''}`,
     `<button class="btn2" data-close>Cancel</button>
      <button class="btn2 gold" id="asSave">${editing ? 'Save changes' : 'Add service'}</button>`);
+
+  document.querySelectorAll('.rarow').forEach(row => {
+    const cb = row.querySelector('.asRole');
+    const sel = row.querySelector('.raselect');
+    cb.addEventListener('change', () => { sel.disabled = !cb.checked; });
+  });
 
   const refreshLit = () => {
     const box = el('asLit');
@@ -1685,7 +1683,12 @@ function openAdd(dateISO, editId) {
   el('asSave').onclick = async () => {
     const date = el('asDate').value, time = el('asTime').value;
     const name = el('asName').value.trim() || 'Service';
-    const roles = [...document.querySelectorAll('.asRole:checked')].map(c => c.value);
+    const roles = [], assign = {};
+    document.querySelectorAll('.rarow').forEach(row => {
+      const cb = row.querySelector('.asRole');
+      const sel = row.querySelector('.raselect');
+      if (cb.checked) { roles.push(cb.value); assign[cb.value] = sel.value || null; }
+    });
     if (!date || !time || !roles.length) {
       toast('A date, a time, and at least one role are needed.'); return;
     }
@@ -1694,10 +1697,8 @@ function openAdd(dateISO, editId) {
 
     if (editing) {
       const oldYear = yearOf(existing);
-      const newAssign = {};
-      roles.forEach(r => { newAssign[r] = (existing.assign && existing.assign[r]) || null; });
       existing.date = date; existing.time = time; existing.name = name;
-      existing.roles = roles; existing.assign = newAssign;
+      existing.roles = roles; existing.assign = assign;
       existing.locked = true;
       App.services.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
       markDirty([...new Set([oldYear, newYear])]);
@@ -1708,8 +1709,7 @@ function openAdd(dateISO, editId) {
     } else {
       App.services.push({
         id: `sp-${date}-${time.replace(':','')}-${Math.random().toString(36).slice(2,7)}`,
-        date, time, name, roles,
-        assign: Object.fromEntries(roles.map(r => [r, null])),
+        date, time, name, roles, assign,
         locked: true, special: true,
       });
       App.services.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
@@ -1717,7 +1717,7 @@ function openAdd(dateISO, editId) {
       App.cursor = fromISO(date);
       App.view = 'week';
       closeAll(); render();
-      toast(`Added ${esc(name)} on ${date}. Assign the men below.`);
+      toast(`Added ${esc(name)} on ${date}.`);
     }
   };
 }
@@ -1782,14 +1782,22 @@ function csvFor(list) {
 function openExport() {
   const y = App.cursor.getFullYear(), m = App.cursor.getMonth();
   openDlg('Export to a spreadsheet', `
-    <div class="fld"><label>Range</label>
-      <select id="exScope">
-        <option value="month">${MONTHS[m]} ${y}</option>
-        <option value="year" selected>All of ${y}</option>
-        <option value="all">Every year on file</option>
-      </select></div>
+    <div class="grp2">
+      <div class="fld"><label>Range</label>
+        <select id="exScope">
+          <option value="month">${MONTHS[m]} ${y}</option>
+          <option value="year" selected>All of ${y}</option>
+          <option value="all">Every year on file</option>
+        </select></div>
+      <div class="fld"><label>Pastor</label>
+        <select id="exPastor">
+          <option value="">Everyone</option>
+          ${PASTORS.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+        </select></div>
+    </div>
     <div class="fld"><label>Format</label>
-      <div class="hint">A CSV file, which opens directly in Excel, Numbers, or Google Sheets.</div>
+      <div class="hint">A CSV file, which opens directly in Excel, Numbers, or Google Sheets.
+      Choosing one pastor above exports only the services he's part of.</div>
     </div>
     <div id="exFallback"></div>`,
     `<button class="btn2" data-close>Cancel</button>
@@ -1798,15 +1806,21 @@ function openExport() {
 
   const pick = () => {
     const s = el('exScope').value;
-    if (s === 'all') return live();
-    if (s === 'year') return live().filter(x => x.date.startsWith(String(y)));
-    return live().filter(x => x.date.startsWith(`${y}-${String(m+1).padStart(2,'0')}`));
+    let list = s === 'all' ? live()
+      : s === 'year' ? live().filter(x => x.date.startsWith(String(y)))
+      : live().filter(x => x.date.startsWith(`${y}-${String(m+1).padStart(2,'0')}`));
+    const pid = el('exPastor').value;
+    if (pid) list = list.filter(x => Object.values(x.assign || {}).includes(pid));
+    return list;
   };
   const nameFor = () => {
     const s = el('exScope').value;
-    return s === 'all' ? 'roster-all-years.csv'
-      : s === 'year' ? `roster-${y}.csv`
-      : `roster-${y}-${String(m+1).padStart(2,'0')}.csv`;
+    const base = s === 'all' ? 'roster-all-years'
+      : s === 'year' ? `roster-${y}`
+      : `roster-${y}-${String(m+1).padStart(2,'0')}`;
+    const pid = el('exPastor').value;
+    const suffix = pid ? `-${PMAP[pid].last.toLowerCase()}` : '';
+    return `${base}${suffix}.csv`;
   };
   el('exGo').onclick = () => {
     const list = pick();
@@ -2088,11 +2102,6 @@ document.addEventListener('click', e => {
     App.cursor = new Date(App.cursor.getFullYear(), Number(mo.dataset.month), 1);
     App.view = 'month'; boot(); return;
   }
-});
-
-document.addEventListener('change', e => {
-  const sel = e.target.closest('select[data-svc]');
-  if (sel) onChangeAssign(sel.dataset.svc, sel.dataset.role, sel.value);
 });
 
 document.addEventListener('focusout', e => {
