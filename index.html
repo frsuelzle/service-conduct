@@ -1303,17 +1303,18 @@ function menOf(s) {
 }
 const openRoles = s => s.roles.filter(r => !(s.assign && s.assign[r]));
 
-function chip(p, roleKeys, serviceName) {
+function chip(p, roleKeys, serviceName, fullName) {
   const man = PMAP[p];
   const named = roleKeys.map(r => ROLE_LABEL[r]);
   const title = named.length ? `${man.name} — ${named.join(', ')}` : man.name;
   const shortText = roleKeys.map(r => roleShort(r, serviceName)).join('/');
+  const whoText = fullName ? man.last : p;
   return `<span class="chip" data-p="${p}" title="${esc(title)}">` +
-         `<span class="who">${p}</span>` +
+         `<span class="who">${esc(whoText)}</span>` +
          (roleKeys.length ? `<span class="rl">${esc(shortText)}</span>` : '') + `</span>`;
 }
-function chipsFor(s) {
-  let h = menOf(s).map(m => chip(m.p, m.roleKeys, s.name)).join('');
+function chipsFor(s, fullName) {
+  let h = menOf(s).map(m => chip(m.p, m.roleKeys, s.name, fullName)).join('');
   const open = openRoles(s);
   if (open.length) {
     const shortText = open.map(r => roleShort(r, s.name)).join('/');
@@ -1372,7 +1373,7 @@ function renderWeek() {
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const todayISO = iso(new Date());
   let h = `<div class="sect-h"><h2>Week of ${MONTHS[start.getMonth()]} ${start.getDate()}</h2>
-    <span class="note">Initials name the pastor; the letters after them are his roles.
+    <span class="note">The letters after each name are his roles.
     Choose Edit to change who's serving.</span></div><div class="wk">`;
 
   for (const d of days) {
@@ -1408,7 +1409,7 @@ function renderWeek() {
             </span>
           </div>
           <div class="wkmen" data-editsvc="${s.id}" title="Choose to edit who's serving">
-            ${chipsFor(s)}
+            ${chipsFor(s, true)}
           </div>
           <div class="notewrap">
             <textarea class="noteinput${s.notes ? ' has' : ''}" data-svc="${s.id}"
