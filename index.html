@@ -394,6 +394,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
+
 /* ============================================================
    Pastoral roster engine
    Pure logic: no DOM. Shared by the app and the node tests.
@@ -838,8 +839,10 @@ if (typeof module !== 'undefined' && module.exports) {
   };
 }
 
+
 </script>
 <script>
+
 /* ============================================================
    Pastoral roster — application layer
    ============================================================ */
@@ -1578,9 +1581,21 @@ function toggleLock(id) {
 function removeService(id) {
   const s = svc(id);
   if (!s) return;
-  if (s.special) App.services = App.services.filter(x => x.id !== id);
+  const who = chipsFor(s, true);
+  openDlg('Remove this service?', `
+    <p style="margin:0 0 4px"><b>${esc(s.name)}</b></p>
+    <p style="margin:0 0 12px;color:var(--mute)">${fmtDateLong(s.date)} at ${fmtTime(s.time)}</p>
+    ${who ? `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">${who}</div>` : ''}
+    <p style="margin:0;font-size:11.5px;color:var(--mute)">You'll have a few seconds to undo this right after.</p>`,
+    `<button class="btn2" data-close>Cancel</button>
+     <button class="btn2 warn" id="rmGo">Remove</button>`);
+  el('rmGo').onclick = () => { closeAll(); doRemoveService(s); };
+}
+
+function doRemoveService(s) {
+  if (s.special) App.services = App.services.filter(x => x.id !== s.id);
   else { s.deleted = true; s.locked = true; }
-  App.lastDeleted = id;
+  App.lastDeleted = s.id;
   markDirty([yearOf(s)]);
   render();
   toast(`Removed ${esc(s.name)} on ${s.date}. <a href="#" id="undoDel"
@@ -2217,5 +2232,6 @@ async function startApp() {
   setSync('idle', '');
   showGate();
 })();
+
 
 </script>
