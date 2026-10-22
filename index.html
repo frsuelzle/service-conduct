@@ -143,9 +143,7 @@
            font-size:11px;padding:3px 8px;color:var(--mute)}
   .tinybtn:hover{background:#E7E4DC;color:var(--ink)}
   .tinybtn.on{background:var(--brass);border-color:var(--brass);color:#fff}
-  .wkmen{display:flex;flex-direction:column;align-items:flex-start;gap:6px;cursor:pointer;
-         padding:4px;margin:-4px;border-radius:6px}
-  .wkmen:hover{background:#F4F2EC}
+  .wkmen{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
   .wkmen .chip{font-size:12px}
   .wkmen .chip .who{padding:4.5px 6px}
   .wkmen .chip .rl{padding:3.5px 6px;font-size:10.5px}
@@ -1421,7 +1419,7 @@ function renderWeek() {
               <button class="tinybtn" data-del="${s.id}">Remove</button>
             </span>
           </div>
-          <div class="wkmen" data-editsvc="${s.id}" title="Choose to edit who's serving">
+          <div class="wkmen">
             ${chipsFor(s, true)}
           </div>
           <div class="notewrap">
