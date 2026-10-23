@@ -243,6 +243,11 @@
   .lit-suggest button{background:none;border:1px solid var(--rule);border-radius:4px;
                       padding:3px 8px;font-size:11px;cursor:pointer;margin-top:6px;color:var(--mute)}
   .lit-suggest button:hover{background:#fff;color:var(--ink)}
+  .readings-input{display:block;width:100%;margin-top:6px;padding:5px 7px;
+                  border:1px solid var(--rule);border-radius:4px;background:#fff;
+                  font-family:inherit;font-size:11.5px;line-height:1.4;color:var(--ink);
+                  resize:vertical}
+  .fld .readings-input{margin-top:0;padding:8px 9px;border-radius:5px;font-size:13px}
   .litedit{display:flex;gap:7px;flex-wrap:wrap}
   .litedit input[type=text]{flex:1 1 200px;min-width:160px;padding:5px 7px;
                              border:1px solid var(--rule);border-radius:4px;background:#fff;
@@ -1642,10 +1647,15 @@ function openDlg(title, body, foot) {
 /* Writes a day's name/color, preserving its readings and any additional
    commemorations beyond the first. Shared by the standalone day editor and
    the service dialog's own day fields. */
-function saveDayInfo(dateISO, name, color) {
+function saveDayInfo(dateISO, name, color, readings) {
   const day = App.liturgical[dateISO] || (App.liturgical[dateISO] = { entries: [] });
-  if (day.entries.length) day.entries[0] = { ...day.entries[0], name, color };
-  else day.entries.push({ name, color, readings: '' });
+  const cur = day.entries[0];
+  const r = readings === undefined ? (cur ? cur.readings || '' : '') : readings.trim();
+  if (cur && cur.name === name && (cur.color || null) === (color || null)
+      && (cur.readings || '') === r) return false;
+  if (cur) day.entries[0] = { ...cur, name, color, readings: r };
+  else day.entries.push({ name, color, readings: r });
+  return true;
 }
 
 /* ----- edit a day's liturgical name/color ----- */
@@ -1664,6 +1674,9 @@ function openEditDay(dateISO) {
         ${Object.keys(LIT_LABEL).map(c => `<option value="${c}"
           ${first && first.color === c ? ' selected' : ''}>${LIT_LABEL[c]}</option>`).join('')}
       </select></div>
+    <div class="fld"><label for="edDayReadings">Readings</label>
+      <textarea id="edDayReadings" class="readings-input" rows="2"
+        placeholder="Leave blank if none apply">${esc(first ? first.readings || '' : '')}</textarea></div>
     ${extraCount > 0 ? `<div class="hint">This day also carries ${extraCount} additional
       commemoration${extraCount > 1 ? 's' : ''} from the imported calendar, which stay as they
       are — only the name and color shown on the calendar change here.</div>` : ''}
@@ -1678,8 +1691,7 @@ function openEditDay(dateISO) {
     const name = el('edDayName').value.trim();
     const color = el('edDayColor').value || null;
     if (!name) { toast('Give the day a name, or use Clear to remove it instead.'); return; }
-    saveDayInfo(dateISO, name, color);
-    saveLiturgical();
+    if (saveDayInfo(dateISO, name, color, el('edDayReadings').value)) saveLiturgical();
     closeAll(); render();
     toast(`Updated ${fmtDateLong(dateISO)}.`);
   };
@@ -1758,9 +1770,10 @@ function openAdd(dateISO, editId) {
               ${first && first.color === c ? ' selected' : ''}>${LIT_LABEL[c]}</option>`).join('')}
           </select>
         </div>
+        <textarea id="asDayReadings" class="readings-input" rows="2"
+          placeholder="Readings (leave blank if none apply)">${esc(first ? first.readings || '' : '')}</textarea>
         ${extra > 0 ? `<div class="rd">+${extra} more commemoration${extra > 1 ? 's' : ''}
           this day, unaffected by this</div>` : ''}
-        ${first && first.readings ? `<div class="rd">${esc(first.readings)}</div>` : ''}
         <button type="button" id="asUseFeast">Use this as the service name</button>
        </div>`;
     const btn = el('asUseFeast');
@@ -1785,8 +1798,8 @@ function openAdd(dateISO, editId) {
     await ensureYears([newYear]);
 
     const dayName = el('asDayName').value.trim();
-    if (dayName) {
-      saveDayInfo(date, dayName, el('asDayColor').value || null);
+    if (dayName && saveDayInfo(date, dayName, el('asDayColor').value || null,
+                               el('asDayReadings').value)) {
       saveLiturgical();
     }
 
