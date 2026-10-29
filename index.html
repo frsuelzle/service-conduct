@@ -147,6 +147,12 @@
   .wkmen .chip{font-size:12px}
   .wkmen .chip .who{padding:4.5px 6px}
   .wkmen .chip .rl{padding:3.5px 6px;font-size:10.5px}
+  .rdgs{margin:0 0 9px;padding:6px 10px;background:#F7F5EF;border-left:2px solid var(--brass-lt);
+        border-radius:3px;display:flex;flex-direction:column;gap:5px}
+  .rdline{display:flex;flex-direction:column;gap:1px}
+  .rdl{font-family:var(--font-mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+       color:var(--mute)}
+  .rdt{font-size:12.5px;line-height:1.35;color:var(--ink);overflow-wrap:anywhere}
   .notewrap{margin-top:9px}
   .noteinput{width:100%;min-height:30px;padding:6px 9px;border:1px solid var(--rule);
              border-radius:5px;background:var(--sheet);font-family:inherit;font-size:12.5px;
@@ -1189,6 +1195,104 @@ function litOn(dateISO) {
 }
 /* First entry's name plus a "+N" marker when a day carries more than one proper
    (Christmas Day, Palm Sunday, and similar have separate Masses/Offices listed). */
+/* ----- appointed readings, as shown in the week view -----
+   Sundays, Wednesdays and Fridays use the readings the calendar appoints for that day.
+   Mondays, Tuesdays and Thursdays cycle the previous Sunday's — first reading, Epistle,
+   Gospel in that order — unless a feast high enough to displace them falls that day.
+   Nothing here is stored on a service: it is worked out from the calendar each time a
+   week is drawn, so it shows for every week without refilling and follows any edit. */
+
+/* "A / B / C" -> ['A','B','C']. Placeholders (XXX) keep their place as null, so a Sunday's
+   first reading / Epistle / Gospel stay in position; text with no chapter and verse at all
+   ("ut in die", "commemoration only") means there are no readings of its own. */
+function readingParts(str) {
+  if (!str || !/\d/.test(str)) return [];
+  const parts = str.split(' / ').map(p => p.trim()).map(p => /^X+$/i.test(p) ? null : p);
+  return parts.some(Boolean) ? parts : [];
+}
+const baseName = n => String(n || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+
+/* The spreadsheet carries no rank, so this is a judgment about which feasts displace the
+   Sunday cycle: the Lord's festivals, the Apostles and Evangelists, the Blessed Virgin's
+   feasts, Michaelmas, All Saints, Holy Week and the Easter and Pentecost octaves. Minor
+   saints and Lenten weekdays do not. Any single day can be changed from Edit day. */
+const DISPLACING = [
+  /^Nativity of Our Lord/, /^Vigil of the Nativity$/, /^St\. Stephen$/, /^St\. John$/,
+  /^Holy Innocents$/, /^Circumcision of Our Lord$/, /^The Epiphany of Our Lord$/,
+  /^Conversion of St\. Paul$/, /^Purification of the Blessed Virgin Mary$/, /^St\. Matthias$/,
+  /^Annunciation of Our Lord$/, /^Maundy Thursday$/, /^Good Friday$/, /^St\. Mark$/,
+  /^St\. Philip and St\. James$/, /^The Ascension of Our Lord$/, /^Pentecost$/,
+  /^Corpus Christi$/, /^The Nativity of St\. John the Baptist$/, /^Sts\. Peter and Paul$/,
+  /^The Visitation of the Blessed Virgin Mary$/, /^St\. James the Great$/,
+  /^The Assumption of the Blessed Virgin Mary$/, /^St\. Bartholomew$/, /^St\. Matthew$/,
+  /^St\. Michael the Archangel$/, /^St\. Luke the Evangelist$/, /^Sts\. Simon and Jude$/,
+  /^Reformation Day$/, /^All Saints$/, /^St\. Andrew$/, /^St\. Thomas$/, /^St\. Barnabas$/,
+  /^Transfiguration/, /\b(Holy Week|Octave of Easter|Octave of Pentecost)\b/,
+];
+/* What "Automatic" decides for a day: 'own' (its feast's readings) or 'cycle' (Sunday's). */
+function autoReadingsMode(day) {
+  const e = day && day.entries && day.entries[0];
+  if (!e || !readingParts(e.readings).length) return 'cycle';
+  const n = baseName(e.name);
+  return DISPLACING.some(re => re.test(n)) ? 'own' : 'cycle';
+}
+const weekdayReadingsMode = day => (day && day.readingsMode) || autoReadingsMode(day);
+
+/* The day's own appointed readings — one line per entry that has any. */
+function ownReadingLines(dateISO) {
+  const day = litOn(dateISO);
+  if (!day) return [];
+  const withR = day.entries.filter(e => readingParts(e.readings).length);
+  return withR.map(e => ({
+    label: withR.length > 1 ? e.name : 'Readings',
+    text: readingParts(e.readings).filter(Boolean).join(' / '),
+  }));
+}
+/* Monday, Tuesday and Thursday take the Sunday's first reading, Epistle and Gospel — by
+   position, as the lectionary lists them. The first reading is not always from the Old
+   Testament (on All Saints it is Revelation), so it is called "First Reading". Square
+   brackets mark an optional reading and are kept as the calendar has them. */
+const CYCLE_PART = { 1: 'First Reading', 2: 'Epistle', 4: 'Gospel' };
+const LETTER_BOOK = /^\[?(Acts|Romans|[12] Corinthians|Galatians|Ephesians|Philippians|Colossians|[12] Thessalonians|[12] Timothy|Titus|Philemon|Hebrews|James|[12] Peter|[123] John|Jude|Revelation)\b/;
+function cycleReadingLines(dateISO) {
+  const dow = fromISO(dateISO).getDay();
+  const label = CYCLE_PART[dow];
+  if (!label) return [];
+  const sundayISO = iso(addDays(fromISO(dateISO), -dow));
+  const sunday = litOn(sundayISO);
+  if (!sunday) return [];
+  for (const e of sunday.entries) {
+    const parts = readingParts(e.readings);            // a placeholder keeps its place as null
+    if (parts.length < 2) continue;
+    let text;
+    if (dow === 1) text = parts[0];
+    else if (dow === 4) text = parts[parts.length - 1];
+    else if (parts.length >= 3) text = parts[1];
+    else text = LETTER_BOOK.test(parts[0] || '') ? parts[0] : null;   // only two readings: the Epistle is the first, if it is a letter
+    if (!text) continue;
+    return [{ label: `${label} · from Sunday`, text,
+      tip: `${DOW_LONG[dow]}: the ${label} from ${baseName(e.name)} (${fmtDateLong(sundayISO)})` }];
+  }
+  return [];
+}
+function readingsFor(dateISO) {
+  const dow = fromISO(dateISO).getDay();
+  if (dow === 1 || dow === 2 || dow === 4) {
+    if (weekdayReadingsMode(litOn(dateISO)) === 'own') {
+      const own = ownReadingLines(dateISO);
+      if (own.length) return own.map(l => ({ ...l, tip: `A feast that displaces the Sunday cycle` }));
+    }
+    return cycleReadingLines(dateISO);
+  }
+  return ownReadingLines(dateISO);
+}
+function readingsBlock(dateISO) {
+  const lines = readingsFor(dateISO);
+  if (!lines.length) return '';
+  return `<div class="rdgs">${lines.map(l => `<div class="rdline"${l.tip ? ` title="${esc(l.tip)}"` : ''}>
+      <span class="rdl">${esc(l.label)}</span><span class="rdt">${esc(l.text)}</span></div>`).join('')}</div>`;
+}
+
 function litSummary(dateISO) {
   const d = litOn(dateISO);
   if (!d) return null;
@@ -1534,8 +1638,8 @@ function renderWeek() {
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const todayISO = iso(new Date());
   let h = `<div class="sect-h"><h2>Week of ${MONTHS[start.getMonth()]} ${start.getDate()}</h2>
-    <span class="note">The letters after each name are his roles.
-    Choose Edit to change who's serving.</span></div><div class="wk">`;
+    <span class="note">The letters after each name are his roles. Choose Edit to change who's
+    serving. In the readings, * differs from the Lutheran Service Book and [ ] is optional.</span></div><div class="wk">`;
 
   for (const d of days) {
     const ds = iso(d), list = onDate(ds), isToday = ds === todayISO;
@@ -1558,6 +1662,7 @@ function renderWeek() {
     } else {
       list.forEach((s, i) => {
         h += `<div class="row">${gut(i === 0)}<div class="body">
+          ${i === 0 ? readingsBlock(ds) : ''}
           <div class="hd">
             <span class="nm">${esc(s.name)}</span>
             <span class="tm">${fmtTime(s.time)}</span>
@@ -1810,6 +1915,9 @@ function openEditDay(dateISO) {
   const existing = litOn(dateISO);
   const first = existing ? existing.entries[0] : null;
   const extraCount = existing ? existing.entries.length - 1 : 0;
+  const dow = fromISO(dateISO).getDay();
+  const cycleDay = !!existing && (dow === 1 || dow === 2 || dow === 4);
+  const autoMode = autoReadingsMode(existing);
 
   openDlg(`Edit ${fmtDateLong(dateISO)}`, `
     <div class="fld"><label for="edDayName">Name</label>
@@ -1824,9 +1932,18 @@ function openEditDay(dateISO) {
     <div class="fld"><label for="edDayReadings">Readings</label>
       <textarea id="edDayReadings" class="readings-input" rows="2"
         placeholder="Leave blank if none apply">${esc(first ? first.readings || '' : '')}</textarea></div>
-    ${extraCount > 0 ? `<div class="hint">This day also carries ${extraCount} additional
-      commemoration${extraCount > 1 ? 's' : ''} from the imported calendar, which stay as they
-      are — only the name and color shown on the calendar change here.</div>` : ''}
+    ${cycleDay ? `<div class="fld"><label for="edDayMode">Readings shown for this ${DOW_LONG[dow]}</label>
+      <select id="edDayMode">
+        <option value="">Automatic — ${autoMode === 'own'
+          ? 'a major feast, so its own readings' : "the Sunday cycle (this isn't a major feast)"}</option>
+        <option value="own"${existing.readingsMode === 'own' ? ' selected' : ''}>This day's own readings (treat it as a feast)</option>
+        <option value="cycle"${existing.readingsMode === 'cycle' ? ' selected' : ''}>The Sunday cycle (not a feast)</option>
+      </select>
+      <div class="hint">Mondays, Tuesdays and Thursdays follow the previous Sunday's readings
+        unless a feast displaces them. Change this for a day where your parish rules otherwise.</div></div>` : ''}
+    ${extraCount > 0 ? `<div class="hint">This day also has ${extraCount} other
+      entr${extraCount > 1 ? 'ies' : 'y'} in the imported calendar (a second Mass, for example),
+      which stay as they are — only the first entry's name, color and readings change here.</div>` : ''}
     <div class="hint" style="margin-top:${extraCount > 0 ? '6px' : '0'}">This replaces what the
       imported spreadsheet set for this day. Re-importing the calendar later will overwrite it
       again.</div>`,
@@ -1838,7 +1955,15 @@ function openEditDay(dateISO) {
     const name = el('edDayName').value.trim();
     const color = el('edDayColor').value || null;
     if (!name) { toast('Give the day a name, or use Clear to remove it instead.'); return; }
-    if (saveDayInfo(dateISO, name, color, el('edDayReadings').value)) saveLiturgical();
+    let modeChanged = false;
+    if (el('edDayMode')) {
+      const v = el('edDayMode').value || null, day = App.liturgical[dateISO];
+      if (day && (day.readingsMode || null) !== v) {
+        if (v) day.readingsMode = v; else delete day.readingsMode;
+        modeChanged = true;
+      }
+    }
+    if (saveDayInfo(dateISO, name, color, el('edDayReadings').value) || modeChanged) saveLiturgical();
     closeAll(); render();
     toast(`Updated ${fmtDateLong(dateISO)}.`);
   };
@@ -1919,7 +2044,7 @@ function openAdd(dateISO, editId) {
         </div>
         <textarea id="asDayReadings" class="readings-input" rows="2"
           placeholder="Readings (leave blank if none apply)">${esc(first ? first.readings || '' : '')}</textarea>
-        ${extra > 0 ? `<div class="rd">+${extra} more commemoration${extra > 1 ? 's' : ''}
+        ${extra > 0 ? `<div class="rd">+${extra} other entr${extra > 1 ? 'ies' : 'y'}
           this day, unaffected by this</div>` : ''}
         <button type="button" id="asUseFeast">Use this as the service name</button>
        </div>`;
