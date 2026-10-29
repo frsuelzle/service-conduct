@@ -29,13 +29,13 @@
   /* ---------- top rail ---------- */
   .rail{position:sticky;top:0;z-index:40;background:var(--slate);color:#F2F1EE;
         border-bottom:1px solid #11131A;padding-top:env(safe-area-inset-top)}
-  .rail-in{display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  .rail-in{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
            padding:11px 18px;max-width:1500px;margin:0 auto}
   .brand{display:flex;align-items:center;margin-right:4px}
   .brand-mark{height:52px;width:auto;display:block;border-radius:2px}
   @media (max-width:640px){.brand-mark{height:40px}}
   .tabs{display:flex;background:#1A1D28;border:1px solid #363B4C;border-radius:7px;padding:2px}
-  .tabs button{background:none;border:0;padding:5px 15px;border-radius:5px;cursor:pointer;
+  .tabs button{background:none;border:0;padding:5px 13px;border-radius:5px;cursor:pointer;
                color:#A6A9B4;font-size:12.5px;letter-spacing:.02em}
   .tabs button[aria-selected=true]{background:var(--paper);color:var(--ink);font-weight:600}
   .nav{display:flex;align-items:center;gap:6px}
@@ -45,7 +45,7 @@
   .icobtn:hover{background:var(--slate-2);color:#fff}
   .spacer{flex:1 1 auto}
   .acts{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-  .btn{background:#1A1D28;border:1px solid #363B4C;color:#E4E5E9;padding:6px 12px;
+  .btn{background:#1A1D28;border:1px solid #363B4C;color:#E4E5E9;padding:6px 11px;
        border-radius:6px;cursor:pointer;font-size:12.5px;white-space:nowrap}
   .btn:hover{background:var(--slate-2)}
   .btn.gold{background:var(--brass);border-color:#A0801F;color:#fff;font-weight:600}
@@ -265,6 +265,9 @@
   .grp2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
   .wrow{display:grid;grid-template-columns:1fr 74px;gap:9px;align-items:center;margin-bottom:8px;
         font-size:13px}
+  .kbseg{display:flex;gap:18px;font-size:13px}
+  .kbseg label{display:flex;gap:6px;align-items:center;cursor:pointer;text-transform:none;
+               letter-spacing:0;font-family:var(--font-ui);font-size:13px;color:var(--ink)}
   .swtch{display:flex;gap:9px;align-items:flex-start;margin-bottom:13px;font-size:13px;
          cursor:pointer;line-height:1.35}
   .swtch input{margin-top:2px;flex:0 0 auto}
@@ -336,11 +339,13 @@
     .nav{width:100%;justify-content:center}
     .nav .period{flex:1;text-align:center;min-width:0}
     .spacer{display:none}
-    .acts{width:100%;justify-content:flex-end;flex-wrap:nowrap;
+    .acts{width:100%;justify-content:flex-end;flex-wrap:nowrap;gap:5px;
           overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:1px}
     .acts .sync{flex:0 0 auto}
     .acts .btn,.acts .icobtn{flex:0 0 auto}
+    .acts .btn{padding:6px 9px}
   }
+  @media (max-width:350px){ .acts .sync{display:none} }
 </style>
 
 <div class="rail">
@@ -365,6 +370,7 @@
       <button class="icobtn" id="refreshBtn" title="Check for changes from others">&#8635;</button>
       <button class="btn" id="addSvc">Add<span class="hide-mobile"> a service</span></button>
       <button class="btn" id="exportBtn">Export</button>
+      <button class="btn" id="keepBtn" title="Keep or unkeep a range of services">Keep</button>
       <button class="btn gold" id="genBtn">Fill<span class="hide-mobile"> schedule</span></button>
       <button class="icobtn" id="setBtn" title="Settings">&#9881;</button>
     </div>
@@ -2020,6 +2026,126 @@ function openGenerate() {
   };
 }
 
+/* ----- keep / unkeep a range of services ----- */
+function openKeepBatch() {
+  const y = App.cursor.getFullYear(), m = App.cursor.getMonth();
+  const first = iso(new Date(y, m, 1)), last = iso(new Date(y, m + 1, 0));
+  openDlg('Keep or unkeep services', `
+    <div class="fld"><label>Action</label>
+      <div class="kbseg">
+        <label><input type="radio" name="kbAct" value="keep" checked> Keep</label>
+        <label><input type="radio" name="kbAct" value="unkeep"> Unkeep</label>
+      </div>
+    </div>
+    <div class="fld"><label for="kbPreset">Range</label>
+      <select id="kbPreset">
+        <option value="month">${MONTHS[m]} ${y}</option>
+        <option value="rest">${MONTHS[m]} ${y} to the end of the year</option>
+        <option value="year">All of ${y}</option>
+        <option value="custom">Custom dates…</option>
+      </select>
+    </div>
+    <div class="grp2">
+      <div class="fld"><label for="kbFrom">From</label>
+        <input type="date" id="kbFrom" value="${first}"></div>
+      <div class="fld"><label for="kbTo">To</label>
+        <input type="date" id="kbTo" value="${last}"></div>
+    </div>
+    <div class="fld"><div class="hint" id="kbInfo" style="margin-top:0"></div></div>
+    <div class="fld"><div class="hint">Kept services stay exactly as they are when you fill the
+      schedule. Services you added by hand are always kept, so unkeeping leaves them alone.</div></div>`,
+    `<button class="btn2" data-close>Cancel</button>
+     <button class="btn2 gold" id="kbGo" disabled>Keep</button>`);
+
+  const yearsIn = (a, b) => {
+    const out = [];
+    for (let yy = Number(a.slice(0, 4)); yy <= Number(b.slice(0, 4)); yy++) out.push(yy);
+    return out;
+  };
+  const readState = () => ({
+    act: document.querySelector('input[name=kbAct]:checked').value,
+    from: el('kbFrom').value, to: el('kbTo').value,
+  });
+  /* What would change, and what is already as asked. */
+  const plan = ({ act, from, to }) => {
+    const inRange = live().filter(s => s.date >= from && s.date <= to);
+    const handAdded = inRange.filter(s => s.special).length;
+    if (act === 'keep') {
+      const change = inRange.filter(s => !s.locked);
+      return { change, total: inRange.length, already: inRange.length - change.length, handAdded };
+    }
+    const change = inRange.filter(s => s.locked && !s.special);
+    return { change, total: inRange.length, already: inRange.length - change.length - handAdded, handAdded };
+  };
+  const plural = n => `${n} service${n === 1 ? '' : 's'}`;
+
+  let token = 0;
+  const refresh = async () => {
+    const st = readState(), my = ++token, go = el('kbGo'), info = el('kbInfo');
+    const keep = st.act === 'keep';
+    go.textContent = keep ? 'Keep' : 'Unkeep';
+    if (!st.from || !st.to || st.from > st.to) {
+      info.textContent = 'Choose a start date on or before the end date.';
+      go.disabled = true; return;
+    }
+    info.textContent = 'Checking…';
+    await ensureYears(yearsIn(st.from, st.to));
+    if (my !== token) return;                      // a newer choice has superseded this one
+    const p = plan(st);
+    if (!p.total) {
+      info.textContent = 'There are no services in this range.';
+      go.disabled = true; return;
+    }
+    const bits = keep
+      ? [`${plural(p.change.length)} will be kept`, p.already ? `${p.already} already ${p.already === 1 ? 'is' : 'are'}` : '']
+      : [`${plural(p.change.length)} will be unkept`,
+         p.already ? `${p.already} weren't kept` : '',
+         p.handAdded ? `${p.handAdded} added by hand stay${p.handAdded === 1 ? 's' : ''} kept` : ''];
+    info.textContent = `${plural(p.total)} in this range: ${bits.filter(Boolean).join('; ')}.`;
+    go.disabled = !p.change.length;
+    go.textContent = p.change.length ? `${keep ? 'Keep' : 'Unkeep'} ${plural(p.change.length)}` : 'Nothing to change';
+  };
+
+  const setDates = (a, b) => { el('kbFrom').value = a; el('kbTo').value = b; };
+  el('kbPreset').onchange = () => {
+    const v = el('kbPreset').value;
+    if (v === 'month') setDates(first, last);
+    else if (v === 'rest') setDates(first, `${y}-12-31`);
+    else if (v === 'year') setDates(`${y}-01-01`, `${y}-12-31`);
+    refresh();
+  };
+  ['kbFrom', 'kbTo'].forEach(id => el(id).addEventListener('input', () => {
+    el('kbPreset').value = 'custom'; refresh();
+  }));
+  document.querySelectorAll('input[name=kbAct]').forEach(r => r.addEventListener('change', refresh));
+  refresh();
+
+  el('kbGo').onclick = async () => {
+    const st = readState(), keep = st.act === 'keep';
+    closeAll();
+    await ensureYears(yearsIn(st.from, st.to));
+    const p = plan(st);
+    if (!p.change.length) return;
+    const before = p.change.map(s => [s.id, s.locked]);
+    p.change.forEach(s => { s.locked = keep; });
+    markDirty([...new Set(p.change.map(yearOf))]);
+    render();
+    toast(`${keep ? 'Kept' : 'Unkept'} ${plural(p.change.length)}.
+      <a href="#" id="undoBatch" style="color:var(--brass-lt)">Undo</a>`, 8000);
+    setTimeout(() => {
+      const u = el('undoBatch');
+      if (!u) return;
+      u.onclick = e => {
+        e.preventDefault();
+        before.forEach(([id, was]) => { const s = svc(id); if (s) s.locked = was; });
+        markDirty([...new Set(before.map(([id]) => yearOf(svc(id) || p.change[0])))]);
+        render();
+        toast('Put back.');
+      };
+    }, 0);
+  };
+}
+
 /* ----- export ----- */
 function csvFor(list) {
   const head = ['Date','Day','Time','Service','Celebrant/Liturgist','Deacon','Subdeacon','Preacher','Status'];
@@ -2334,6 +2460,7 @@ document.addEventListener('click', e => {
   if (t.closest('#addSvc')) { openAdd(); return; }
   if (t.closest('#genBtn')) { openGenerate(); return; }
   if (t.closest('#exportBtn')) { openExport(); return; }
+  if (t.closest('#keepBtn')) { openKeepBatch(); return; }
   if (t.closest('#setBtn')) { openSettings(); return; }
 
   const lock = t.closest('[data-lock]');
