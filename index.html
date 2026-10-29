@@ -511,10 +511,26 @@ function eveningPrayerTargets(settings) {
   return Object.fromEntries(PIDS.map(p => [p, (w[p] || 0) / sum]));
 }
 
+/* Small seeded random generator. With a seed the scheduler varies its choices
+   (always within the hard rules); with none it stays fully deterministic. */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+/* jitter: how far a random nudge can move a choice (in "sermons of deficit");
+   last / prior: how much to discourage repeating a slot's holder from 1 / 2 weeks ago. */
+const TUNE = { jitter: 1.4, last: 4.0, prior: 1.6, scale: 0.6 };
+const jit = (state, amount) => state.rng ? (state.rng() * 2 - 1) * amount : 0;
+
 function makeState(settings) {
   return {
     target: effectiveTargets(settings),
     epTarget: eveningPrayerTargets(settings),
+    rng: settings.seed != null ? mulberry32(settings.seed) : null,
     sermons: Object.fromEntries(PIDS.map(p => [p, 0])),
     celebrantDuty: Object.fromEntries(PIDS.map(p => [p, 0])),
     deaconDuty: Object.fromEntries(PIDS.map(p => [p, 0])),
@@ -523,7 +539,35 @@ function makeState(settings) {
     totalSermons: 0,
     lastLeckbandWeek: -Infinity,
     lastSundayDeacon: null,
+    recent: {},        // slot key -> preachers, most recent first (used for variety)
+    recentDeacon: {},  // slot key -> deacons, most recent first
   };
+}
+
+/* "Who held this slot lately?" — lets a varied fill steer away from giving the
+   same man the same slot week after week. Always recorded; only consulted when
+   a seed is in use. */
+const slotKey = s => `${fromISO(s.date).getDay()}-${s.time}`;
+function remember(map, slot, p) {
+  if (!p) return;
+  map[slot] = [p, ...(map[slot] || [])].slice(0, 2);
+}
+/* The cost of giving a slot to the same man again. It grows with how far ahead of the
+   best alternative he currently is, so one big imbalance in the earlier months can't
+   make the same man take the same slot every week: he still gets his share of sermons,
+   just spread across different slots from week to week. */
+function repeatCost(state, slot, p, lead, w1, w2) {
+  if (!state.rng || !slot) return 0;
+  const r = state.recent[slot] || [];
+  const extra = TUNE.scale * Math.max(0, lead);
+  return (r[0] === p ? w1 + extra : 0) + (r[1] === p ? w2 + extra * 0.4 : 0);
+}
+/* How far ahead of the best other candidate is p? (base: [{p, d}]) */
+function leadOf(base, p) {
+  let best = -Infinity;
+  for (const x of base) if (x.p !== p && x.d > best) best = x.d;
+  const mine = base.find(x => x.p === p).d;
+  return best === -Infinity ? 0 : mine - best;
 }
 
 /* Seed counters from services that already exist before the generated range,
@@ -542,6 +586,8 @@ function seedState(state, services, beforeISO, settings) {
         }
       }
       if (a.celebrant) state.celebrantDuty[a.celebrant]++;
+      remember(state.recent, slotKey(s), a.preacher);
+      remember(state.recentDeacon, slotKey(s), a.deacon);
       if (a.deacon) {
         state.deaconDuty[a.deacon]++;
         if (fromISO(s.date).getDay() === 0) state.lastSundayDeacon = a.deacon;
@@ -567,8 +613,12 @@ function deficit(state, p) {
 function canPreach(state, weekPreach, weekIdx, p, opts, settings) {
   if (opts.sunday && settings.noSundayPreaching.includes(p)) return false;
   if ((weekPreach[p] || 0) >= settings.maxSermonsPerWeek) return false;
-  if (p === 'LK' && settings.capLeckbandToInterval &&
-      weekIdx - state.lastLeckbandWeek < settings.leckbandInterval) return false;
+  if (p === 'LK' && settings.capLeckbandToInterval) {
+    if (weekIdx - state.lastLeckbandWeek < settings.leckbandInterval) return false;
+    /* services already fixed elsewhere (kept, hand-added, or outside the range being
+       filled) count in both directions, so a fill can't land beside one of his sermons */
+    if (state.pinnedLk && state.pinnedLk.some(w => Math.abs(w - weekIdx) < settings.leckbandInterval)) return false;
+  }
   return true;
 }
 
@@ -577,11 +627,15 @@ function bestPreacher(state, weekPreach, weekIdx, cands, opts, settings) {
   const pool = ok.length ? ok
     : cands.filter(p => !(opts.sunday && settings.noSundayPreaching.includes(p)));
   if (!pool.length) return cands[0] || null;
-  return pool.slice().sort((a, b) =>
-    (deficit(state, b) - deficit(state, a)) ||
-    (state.sermons[a] - state.sermons[b]) ||
-    (PIDS.indexOf(a) - PIDS.indexOf(b))
-  )[0];
+  const base = pool.map(p => ({ p, d: deficit(state, p) }));
+  const scored = base.map(({ p, d }) => ({ p,
+    s: d + jit(state, TUNE.jitter) - repeatCost(state, opts.slot, p, leadOf(base, p), TUNE.last, TUNE.prior) }));
+  scored.sort((a, b) =>
+    (b.s - a.s) ||
+    (state.sermons[a.p] - state.sermons[b.p]) ||
+    (PIDS.indexOf(a.p) - PIDS.indexOf(b.p))
+  );
+  return scored[0].p;
 }
 
 function recordSermon(state, weekPreach, weekIdx, p) {
@@ -594,15 +648,24 @@ function recordSermon(state, weekPreach, weekIdx, p) {
 /* Pick deacon + preacher together for a three-role Divine Service. */
 function pickDeaconAndPreacher(state, weekPreach, weekIdx, cel, opts, settings) {
   const options = [];
+  const prNudge = {}, dNudge = {}, prDef = {};
   for (const d of partnersFor(cel)) {
     for (const pr of [cel, d]) {
       if (opts.sunday && settings.noSundayPreaching.includes(pr)) continue;
       if (!canPreach(state, weekPreach, weekIdx, pr, opts, settings)) continue;
-      let score = deficit(state, pr);
-      score -= state.deaconDuty[d] * 0.012;                     // spread deacon turns
-      if (opts.sunday && d === state.lastSundayDeacon) score -= 0.06;
-      options.push({ d, pr, score });
+      if (!(pr in prNudge)) { prNudge[pr] = jit(state, TUNE.jitter); prDef[pr] = deficit(state, pr); }
+      if (!(d in dNudge)) dNudge[d] = jit(state, TUNE.jitter * 0.5);
+      options.push({ d, pr });
     }
+  }
+  const base = Object.keys(prDef).map(p => ({ p, d: prDef[p] }));
+  for (const o of options) {
+    let score = prDef[o.pr] + prNudge[o.pr] + dNudge[o.d];
+    score -= repeatCost(state, opts.slot, o.pr, leadOf(base, o.pr), TUNE.last, TUNE.prior);
+    if (state.rng && opts.slot && (state.recentDeacon[opts.slot] || [])[0] === o.d) score -= 0.8;
+    score -= state.deaconDuty[o.d] * (state.rng ? 0.06 : 0.012);   // spread deacon turns
+    if (opts.sunday && o.d === state.lastSundayDeacon) score -= 0.06;
+    o.score = score;
   }
   if (!options.length) {
     const d = partnersFor(cel)
@@ -618,19 +681,60 @@ function pickDeaconAndPreacher(state, weekPreach, weekIdx, cel, opts, settings) 
  * Build assignments for one liturgical week.
  * Returns { [dow-time]: {celebrant, deacon, preacher} }
  */
-function assignWeek(state, sunday, settings) {
+function assignWeek(state, sunday, settings, ctx) {
   const weekIdx = weekIndexOf(sunday);
   const weekPreach = {};
   const out = {};
 
+  /* Services already fixed in this week — kept, hand-added, or sitting outside the
+     range being filled (the first and last week of a partial fill straddle it) — are
+     honoured rather than re-planned: they count toward the weekly sermon cap, and the
+     Sunday they imply drives Tuesday, Wednesday and Thursday. */
+  const pin = {};
+  for (const sv of (ctx && ctx.pins) || []) {
+    const a = sv.assign || {};
+    if (a.preacher) weekPreach[a.preacher] = (weekPreach[a.preacher] || 0) + 1;
+    pin[slotKey(sv)] = sv;
+  }
+  /* Count a fixed service in the running totals — only inside the range; anything
+     earlier was already counted when the state was seeded. */
+  const adopt = sv => {
+    if (!ctx || sv.date < ctx.startISO || sv.date > ctx.endISO) return;
+    const a = sv.assign || {};
+    if (a.preacher) {
+      state.sermons[a.preacher]++; state.totalSermons++;
+      if (a.preacher === 'LK') state.lastLeckbandWeek = weekIdx;
+    }
+    if (a.celebrant) state.celebrantDuty[a.celebrant]++;
+    if (a.deacon) state.deaconDuty[a.deacon]++;
+    if (sv.name === 'Evening Prayer' && a.celebrant) {
+      state.eveningPrayerDuty[a.celebrant]++; state.totalEP++;
+    }
+    remember(state.recent, slotKey(sv), a.preacher);
+    remember(state.recentDeacon, slotKey(sv), a.deacon);
+  };
+
   /* 1. Sunday — Leigeber and Suelzle alternate as celebrant. */
-  const sunCel = (weekIdx + settings.alternationAnchor) % 2 === 0 ? 'LG' : 'SU';
-  const sun = pickDeaconAndPreacher(state, weekPreach, weekIdx, sunCel, { sunday: true }, settings);
-  out['0-09:30'] = { celebrant: sunCel, deacon: sun.deacon, preacher: sun.preacher };
-  recordSermon(state, weekPreach, weekIdx, sun.preacher);
-  state.celebrantDuty[sunCel]++;
-  state.deaconDuty[sun.deacon]++;
-  state.lastSundayDeacon = sun.deacon;
+  let sunCel = (weekIdx + settings.alternationAnchor) % 2 === 0 ? 'LG' : 'SU';
+  let sun;
+  const pSun = pin['0-09:30'];
+  if (pSun) {
+    const a = pSun.assign || {};
+    if (a.celebrant) sunCel = a.celebrant;
+    sun = { deacon: a.deacon || null, preacher: a.preacher || null };
+    out['0-09:30'] = { celebrant: sunCel, deacon: sun.deacon, preacher: sun.preacher };
+    adopt(pSun);
+    if (sun.deacon) state.lastSundayDeacon = sun.deacon;
+  } else {
+    sun = pickDeaconAndPreacher(state, weekPreach, weekIdx, sunCel, { sunday: true, slot: '0-09:30' }, settings);
+    out['0-09:30'] = { celebrant: sunCel, deacon: sun.deacon, preacher: sun.preacher };
+    recordSermon(state, weekPreach, weekIdx, sun.preacher);
+    state.celebrantDuty[sunCel]++;
+    state.deaconDuty[sun.deacon]++;
+    state.lastSundayDeacon = sun.deacon;
+    remember(state.recent, '0-09:30', sun.preacher);
+    remember(state.recentDeacon, '0-09:30', sun.deacon);
+  }
 
   /* 2. Sunday's preacher takes Tuesday and Thursday Matins. */
   const weekdayCel = CELEBRANT_ELIGIBLE.includes(sun.preacher) ? sun.preacher : sunCel;
@@ -639,43 +743,74 @@ function assignWeek(state, sunday, settings) {
   state.celebrantDuty[weekdayCel] += 2;
 
   /* 3. Wednesday Divine Service — the other senior man celebrates. */
-  const wedCel = sunCel === 'LG' ? 'SU' : 'LG';
-  const wed = pickDeaconAndPreacher(state, weekPreach, weekIdx, wedCel, {}, settings);
-  out['3-08:15'] = { celebrant: wedCel, deacon: wed.deacon, preacher: wed.preacher };
-  recordSermon(state, weekPreach, weekIdx, wed.preacher);
-  state.celebrantDuty[wedCel]++;
-  state.deaconDuty[wed.deacon]++;
+  let wedCel = sunCel === 'LG' ? 'SU' : 'LG';
+  const pWed = pin['3-08:15'];
+  if (pWed) {
+    const a = pWed.assign || {};
+    out['3-08:15'] = { celebrant: a.celebrant || wedCel, deacon: a.deacon || null, preacher: a.preacher || null };
+    adopt(pWed);
+  } else {
+    const wed = pickDeaconAndPreacher(state, weekPreach, weekIdx, wedCel, { slot: '3-08:15' }, settings);
+    out['3-08:15'] = { celebrant: wedCel, deacon: wed.deacon, preacher: wed.preacher };
+    recordSermon(state, weekPreach, weekIdx, wed.preacher);
+    state.celebrantDuty[wedCel]++;
+    state.deaconDuty[wed.deacon]++;
+    remember(state.recent, '3-08:15', wed.preacher);
+    remember(state.recentDeacon, '3-08:15', wed.deacon);
+  }
 
   /* 4. Wednesday Evening Prayer — one man liturgises and preaches.
         Juniors are favored (it's the one service they may lead), but as a
         weighted preference across all four, not a pool that excludes the
         other two — otherwise this slot just alternates between two men
         forever instead of genuinely rotating. */
+  const pEp = pin['3-18:30'];
+  if (pEp) {
+    const a = pEp.assign || {};
+    const who = a.celebrant || a.preacher || null;
+    out['3-18:30'] = { celebrant: who, preacher: a.preacher || who };
+    adopt(pEp);
+  } else {
   const epCands = PIDS.filter(p => canPreach(state, weekPreach, weekIdx, p, {}, settings));
   const epPool = epCands.length ? epCands : PIDS;
-  const ep = epPool.slice().sort((a, b) =>
-    (epDeficit(state, b) - epDeficit(state, a)) ||
-    (state.eveningPrayerDuty[a] - state.eveningPrayerDuty[b]) ||
-    (PIDS.indexOf(a) - PIDS.indexOf(b))
-  )[0];
+  const epBase = epPool.map(p => ({ p, d: epDeficit(state, p) }));
+  const epScored = epBase.map(({ p, d }) => ({ p,
+    s: d + jit(state, TUNE.jitter) - repeatCost(state, '3-18:30', p, leadOf(epBase, p), TUNE.last * 0.75, TUNE.prior * 0.7) }));
+  epScored.sort((a, b) =>
+    (b.s - a.s) ||
+    (state.eveningPrayerDuty[a.p] - state.eveningPrayerDuty[b.p]) ||
+    (PIDS.indexOf(a.p) - PIDS.indexOf(b.p))
+  );
+  const ep = epScored[0].p;
   out['3-18:30'] = { celebrant: ep, preacher: ep };
   recordSermon(state, weekPreach, weekIdx, ep);
   state.celebrantDuty[ep]++;
   state.eveningPrayerDuty[ep]++;
   state.totalEP++;
+  remember(state.recent, '3-18:30', ep);
+  }
 
   /* 5. Monday and Friday Matins. */
   for (const dow of [1, 5]) {
-    const pr = bestPreacher(state, weekPreach, weekIdx, PIDS, {}, settings);
+    const pMat = pin[`${dow}-08:15`];
+    if (pMat) {
+      const a = pMat.assign || {};
+      out[`${dow}-08:15`] = { celebrant: a.celebrant || null, preacher: a.preacher || null };
+      adopt(pMat);
+      continue;
+    }
+    const pr = bestPreacher(state, weekPreach, weekIdx, PIDS, { slot: `${dow}-08:15` }, settings);
     let cel;
     if (CELEBRANT_ELIGIBLE.includes(pr)) {
       cel = pr;
     } else {
-      cel = CELEBRANT_ELIGIBLE
-        .filter(c => pairAllowed(c, pr))
-        .sort((a, b) => state.celebrantDuty[a] - state.celebrantDuty[b])[0] || 'LG';
+      const opts2 = CELEBRANT_ELIGIBLE.filter(c => pairAllowed(c, pr))
+        .map(c => ({ c, s: state.celebrantDuty[c] + jit(state, 2.5) }));
+      opts2.sort((a, b) => a.s - b.s);
+      cel = opts2.length ? opts2[0].c : 'LG';
     }
     out[`${dow}-08:15`] = { celebrant: cel, preacher: pr };
+    remember(state.recent, `${dow}-08:15`, pr);
     recordSermon(state, weekPreach, weekIdx, pr);
     state.celebrantDuty[cel]++;
   }
@@ -699,11 +834,16 @@ function generateRange(startISO, endISO, settings, existing = []) {
   const keptKey = new Set(keep.map(s => `${s.date}|${s.time}`));
 
   const state = seedState(makeState(settings), existing, startISO, settings);
+  const fixed = keep.filter(s => !s.deleted);
+  state.pinnedLk = fixed.filter(s => s.assign && s.assign.preacher === 'LK')
+    .map(s => weekIndexOf(startOfWeek(fromISO(s.date))));
   const built = [];
   const end = fromISO(endISO);
 
   for (let sunday = startOfWeek(fromISO(startISO)); sunday <= end; sunday = addDays(sunday, 7)) {
-    const week = assignWeek(state, sunday, settings);
+    const wkFrom = iso(sunday), wkTo = iso(addDays(sunday, 6));
+    const pins = fixed.filter(s => s.date >= wkFrom && s.date <= wkTo);
+    const week = assignWeek(state, sunday, settings, { pins, startISO, endISO });
     for (const tpl of WEEKLY_TEMPLATE) {
       const day = addDays(sunday, tpl.dow);
       const dISO = iso(day);
@@ -843,6 +983,7 @@ function tally(services) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    TUNE,
     PASTORS, PIDS, PMAP, PAIRS, ROLES, ROLE_LABEL, ROLE_SHORT,
     CELEBRANT_ELIGIBLE, WEEKLY_TEMPLATE, DEFAULT_SETTINGS,
     iso, fromISO, addDays, startOfWeek, weekIndexOf, partnersFor, pairAllowed,
@@ -1841,6 +1982,13 @@ function openGenerate() {
         <option value="rest">${MONTHS[m]} ${y} to the end of the year</option>
       </select>
     </div>
+    <div class="fld">
+      <label class="swtch"><input type="checkbox" id="gnMix" checked>
+        <span>Mix it up
+        <span class="sub">Varies who takes each day, so the same man isn't always in the same
+        slot. Every parish rule still holds. Fill again for a different arrangement. Turn this
+        off for the strict, predictable rotation.</span></span></label>
+    </div>
     <div class="fld"><label>What happens</label>
       <div class="hint">The weekly pattern is written across the range and the men are assigned
       from the parish rules. Anything you marked <b>Kept</b>, anything you added by hand, and
@@ -1850,6 +1998,7 @@ function openGenerate() {
      <button class="btn2 gold" id="gnGo">Fill it</button>`);
   el('gnGo').onclick = async () => {
     const scope = el('gnScope').value;
+    const mix = el('gnMix').checked;   // read now: the dialog closes just below
     let a, b;
     if (scope === 'year') { a = `${y}-01-01`; b = `${y}-12-31`; }
     else if (scope === 'month') {
@@ -1860,13 +2009,14 @@ function openGenerate() {
     await ensureYears([y]);
     const others = App.services.filter(s => !s.date.startsWith(String(y)));
     const mine = App.services.filter(s => s.date.startsWith(String(y)));
-    const built = generateRange(a, b, App.settings, mine);
+    const seed = mix ? Math.floor(Math.random() * 2147483646) + 1 : null;
+    const built = generateRange(a, b, seed == null ? App.settings : { ...App.settings, seed }, mine);
     App.services = [...others, ...built]
       .sort((x, z) => (x.date + x.time).localeCompare(z.date + z.time));
     markDirty([y]);
     render();
     const n = built.filter(s => !s.deleted).length;
-    toast(`Filled ${n} services. Check the rule panel in the year view.`);
+    toast(`Filled ${n} services.`);
   };
 }
 
