@@ -62,6 +62,7 @@
   .sect-h{display:flex;align-items:baseline;gap:11px;margin:0 0 11px}
   .sect-h h2{font-family:var(--font-display);font-weight:500;font-size:19px;margin:0}
   .sect-h .note{font-size:12px;color:var(--mute)}
+  .wkfoot{margin:14px 2px 6px;font-size:12px;line-height:1.5;color:var(--mute)}
 
   /* ---------- chips: solid initials, joined to an outlined role tag ---------- */
   .chip{display:inline-flex;align-items:center;gap:0;border-radius:4px;overflow:hidden;
@@ -1637,9 +1638,7 @@ function renderWeek() {
   const start = startOfWeek(App.cursor);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const todayISO = iso(new Date());
-  let h = `<div class="sect-h"><h2>Week of ${MONTHS[start.getMonth()]} ${start.getDate()}</h2>
-    <span class="note">The letters after each name are his roles. Choose Edit to change who's
-    serving. In the readings, * differs from the Lutheran Service Book and [ ] is optional.</span></div><div class="wk">`;
+  let h = `<div class="sect-h"><h2>Week of ${MONTHS[start.getMonth()]} ${start.getDate()}</h2></div><div class="wk">`;
 
   for (const d of days) {
     const ds = iso(d), list = onDate(ds), isToday = ds === todayISO;
@@ -1692,7 +1691,7 @@ function renderWeek() {
     h += `<div class="restore">${gone.length} service${gone.length > 1 ? 's' : ''} removed
       this week. <button class="tinybtn" data-restoreweek="1">Put back</button></div>`;
   }
-  h += `</div>`;
+  h += `</div><p class="wkfoot">The letters after each name are his roles. Choose Edit to change who's serving. In the readings, * differs from the Lutheran Service Book and [ ] is optional.</p>`;
   el('view').innerHTML = h;
   document.querySelectorAll('.noteinput').forEach(ta => {
     ta.style.height = 'auto';
