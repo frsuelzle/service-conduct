@@ -147,12 +147,12 @@
   .wkmen .chip{font-size:12px}
   .wkmen .chip .who{padding:4.5px 6px}
   .wkmen .chip .rl{padding:3.5px 6px;font-size:10.5px}
-  .rdgs{margin:0 0 9px;padding:6px 10px;background:#F7F5EF;border-left:2px solid var(--brass-lt);
-        border-radius:3px;display:flex;flex-direction:column;gap:5px}
-  .rdline{display:flex;flex-direction:column;gap:1px}
-  .rdl{font-family:var(--font-mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;
-       color:var(--mute)}
-  .rdt{font-size:12.5px;line-height:1.35;color:var(--ink);overflow-wrap:anywhere}
+  .rdgs{margin:7px 0 0;display:flex;flex-direction:column;gap:2px;font-size:12px;
+        line-height:1.4;color:var(--mute)}
+  .rdline{display:block;overflow-wrap:anywhere}
+  .rdl{color:var(--mute-2);margin-right:7px}
+  .rdl::after{content:":"}
+  .rdt{color:var(--mute)}
   .notewrap{margin-top:9px}
   .noteinput{width:100%;min-height:30px;padding:6px 9px;border:1px solid var(--rule);
              border-radius:5px;background:var(--sheet);font-family:inherit;font-size:12.5px;
@@ -1280,7 +1280,7 @@ function readingsFor(dateISO) {
   if (dow === 1 || dow === 2 || dow === 4) {
     if (weekdayReadingsMode(litOn(dateISO)) === 'own') {
       const own = ownReadingLines(dateISO);
-      if (own.length) return own.map(l => ({ ...l, tip: `A feast that displaces the Sunday cycle` }));
+      if (own.length) return own.map(l => ({ ...l, tip: `This day's own readings, not the Sunday cycle` }));
     }
     return cycleReadingLines(dateISO);
   }
@@ -1662,7 +1662,6 @@ function renderWeek() {
     } else {
       list.forEach((s, i) => {
         h += `<div class="row">${gut(i === 0)}<div class="body">
-          ${i === 0 ? readingsBlock(ds) : ''}
           <div class="hd">
             <span class="nm">${esc(s.name)}</span>
             <span class="tm">${fmtTime(s.time)}</span>
@@ -1679,6 +1678,7 @@ function renderWeek() {
           <div class="wkmen">
             ${chipsFor(s, true)}
           </div>
+          ${i === 0 ? readingsBlock(ds) : ''}
           <div class="notewrap">
             <textarea class="noteinput${s.notes ? ' has' : ''}" data-svc="${s.id}"
               placeholder="Add a note for the team…" rows="1">${esc(s.notes || '')}</textarea>
@@ -1899,6 +1899,17 @@ function openDlg(title, body, foot) {
 /* Writes a day's name/color, preserving its readings and any additional
    commemorations beyond the first. Shared by the standalone day editor and
    the service dialog's own day fields. */
+/* Mondays, Tuesdays and Thursdays normally show the Sunday's reading. If someone types
+   readings for one of those days they want to see them, so the day switches to showing
+   its own. Returns true if it changed anything. */
+function showOwnReadingsIfCycleDay(dateISO) {
+  const dow = fromISO(dateISO).getDay();
+  const day = litOn(dateISO);
+  if (!day || ![1, 2, 4].includes(dow) || weekdayReadingsMode(day) === 'own') return false;
+  day.readingsMode = 'own';
+  return true;
+}
+
 function saveDayInfo(dateISO, name, color, readings) {
   const day = App.liturgical[dateISO] || (App.liturgical[dateISO] = { entries: [] });
   const cur = day.entries[0];
@@ -1940,7 +1951,8 @@ function openEditDay(dateISO) {
         <option value="cycle"${existing.readingsMode === 'cycle' ? ' selected' : ''}>The Sunday cycle (not a feast)</option>
       </select>
       <div class="hint">Mondays, Tuesdays and Thursdays follow the previous Sunday's readings
-        unless a feast displaces them. Change this for a day where your parish rules otherwise.</div></div>` : ''}
+        unless a feast displaces them. Typing readings above for such a day makes it show those
+        instead; clearing them returns it to the cycle.</div></div>` : ''}
     ${extraCount > 0 ? `<div class="hint">This day also has ${extraCount} other
       entr${extraCount > 1 ? 'ies' : 'y'} in the imported calendar (a second Mass, for example),
       which stay as they are — only the first entry's name, color and readings change here.</div>` : ''}
@@ -1963,7 +1975,16 @@ function openEditDay(dateISO) {
         modeChanged = true;
       }
     }
-    if (saveDayInfo(dateISO, name, color, el('edDayReadings').value) || modeChanged) saveLiturgical();
+    const newReadings = el('edDayReadings').value.trim();
+    const oldReadings = first ? (first.readings || '').trim() : '';
+    const dayChanged = saveDayInfo(dateISO, name, color, el('edDayReadings').value);
+    /* typing readings for a day that follows the Sunday cycle makes it show them instead —
+       unless Sunday's cycle was chosen in this same save */
+    if (dayChanged && newReadings && newReadings !== oldReadings &&
+        (!el('edDayMode') || el('edDayMode').value !== 'cycle')) {
+      modeChanged = showOwnReadingsIfCycleDay(dateISO) || modeChanged;
+    }
+    if (dayChanged || modeChanged) saveLiturgical();
     closeAll(); render();
     toast(`Updated ${fmtDateLong(dateISO)}.`);
   };
@@ -2070,9 +2091,14 @@ function openAdd(dateISO, editId) {
     await ensureYears([newYear]);
 
     const dayName = el('asDayName').value.trim();
-    if (dayName && saveDayInfo(date, dayName, el('asDayColor').value || null,
-                               el('asDayReadings').value)) {
-      saveLiturgical();
+    if (dayName) {
+      const newReadings = el('asDayReadings').value.trim();
+      const had = litOn(date), oldReadings = had ? (had.entries[0].readings || '').trim() : '';
+      let dayChanged = saveDayInfo(date, dayName, el('asDayColor').value || null, el('asDayReadings').value);
+      if (dayChanged && newReadings && newReadings !== oldReadings) {
+        dayChanged = showOwnReadingsIfCycleDay(date) || dayChanged;
+      }
+      if (dayChanged) saveLiturgical();
     }
 
     if (editing) {
