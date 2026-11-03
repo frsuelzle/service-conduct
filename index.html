@@ -113,6 +113,23 @@
          color:var(--mute);cursor:pointer;text-decoration:underline;
          text-decoration-color:var(--rule);text-underline-offset:2px}
   .addln:hover{color:var(--brass)}
+  /* the Add button in the corner of each day */
+  .cell{container-type:inline-size}
+  .cell .dhd{margin-right:30px}
+  .cadd{position:absolute;top:4px;right:5px;display:inline-flex;align-items:center;
+        justify-content:center;gap:3px;height:20px;min-width:20px;padding:0 5px;
+        border:1px solid var(--rule);border-radius:10px;background:var(--sheet);
+        color:var(--mute);font:inherit;font-size:11px;line-height:1;cursor:pointer}
+  .cadd .pl{font-size:15px;line-height:1;margin-top:-1px}
+  .cadd .tx{display:none;font-size:10.5px;letter-spacing:.02em}
+  .cadd:hover{border-color:var(--brass);color:var(--brass);background:#FAF6EA}
+  .cell.out .cadd{opacity:.55}
+  .cell .feast{margin-top:3px}
+  @container (min-width:150px){
+    .cadd .tx{display:inline}
+    .cadd{padding:0 8px 0 6px}
+    .cell .dhd{margin-right:62px}
+  }
 
   /* ---------- week view ---------- */
   .wk{display:flex;flex-direction:column;gap:1px;background:var(--rule);
@@ -329,6 +346,9 @@
     .grid .dow{display:none}
     .cell{border:1px solid var(--rule);border-radius:6px;min-height:0}
     .cell.out{display:none}
+    .cadd{height:28px;top:5px;right:6px;font-size:12px}
+    .cadd .pl{font-size:17px}
+    .cell .feast{max-width:calc(100% - 76px)}
     .row{grid-template-columns:64px 1fr}
     .racheck{min-width:100%}
     .raselect{min-width:100%}
@@ -465,6 +485,41 @@ const WEEKLY_TEMPLATE = [
   { dow: 4, time: '08:15', name: 'Matins',         roles: ['celebrant'] },
   { dow: 5, time: '08:15', name: 'Matins',         roles: ['celebrant', 'preacher'] },
 ];
+
+/* In Advent and Lent, Wednesday is Matins in the morning and the Divine Service in the
+   evening, in place of the usual Divine Service at 8:15 and Evening Prayer at 6:30. */
+const SEASON_WEDNESDAY = [
+  { dow: 3, time: '08:15', name: 'Matins',         roles: ['celebrant', 'preacher'] },
+  { dow: 3, time: '18:30', name: 'Divine Service', roles: ['celebrant', 'deacon', 'preacher'] },
+];
+/* Easter Sunday, by the usual Gregorian computus. */
+function easterOf(y) {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(y, month - 1, day);
+}
+/* 'lent' from Ash Wednesday through Holy Saturday; 'advent' from the First Sunday in Advent
+   up to (not including) December 24; otherwise null. */
+function seasonOf(date) {
+  const y = date.getFullYear(), day = new Date(y, date.getMonth(), date.getDate());
+  const easter = easterOf(y);
+  if (day >= addDays(easter, -46) && day <= addDays(easter, -1)) return 'lent';
+  const xmas = new Date(y, 11, 25);
+  const advent1 = addDays(xmas, -((xmas.getDay() || 7) + 21));
+  if (day >= advent1 && day < new Date(y, 11, 24)) return 'advent';
+  return null;
+}
+const isSeasonWednesday = date => date.getDay() === 3 && !!seasonOf(date);
+/* The week's pattern of services: the usual one, or with the Advent/Lent Wednesday. */
+function templateForWeek(sunday) {
+  if (!isSeasonWednesday(addDays(sunday, 3))) return WEEKLY_TEMPLATE;
+  return [...WEEKLY_TEMPLATE.filter(t => t.dow !== 3), ...SEASON_WEDNESDAY]
+    .sort((a, b) => (a.dow - b.dow) || a.time.localeCompare(b.time));
+}
 
 const DEFAULT_SETTINGS = {
   weights: { LG: 40, SU: 40, LK: 10, LH: 10 },
@@ -757,6 +812,46 @@ function assignWeek(state, sunday, settings, ctx) {
 
   /* 3. Wednesday Divine Service — the other senior man celebrates. */
   let wedCel = sunCel === 'LG' ? 'SU' : 'LG';
+  if (isSeasonWednesday(addDays(sunday, 3))) {
+    /* Advent and Lent: the Divine Service in the evening (celebrant, deacon, preacher — the
+       other senior man celebrates) and Matins in the morning with a sermon, chosen the way
+       Monday and Friday Matins are. */
+    const pD = pin['3-18:30'];
+    if (pD) {
+      const a = pD.assign || {};
+      out['3-18:30'] = { celebrant: a.celebrant || wedCel, deacon: a.deacon || null, preacher: a.preacher || null };
+      adopt(pD);
+    } else {
+      const wed = pickDeaconAndPreacher(state, weekPreach, weekIdx, wedCel, { slot: '3-18:30' }, settings);
+      out['3-18:30'] = { celebrant: wedCel, deacon: wed.deacon, preacher: wed.preacher };
+      recordSermon(state, weekPreach, weekIdx, wed.preacher);
+      state.celebrantDuty[wedCel]++;
+      state.deaconDuty[wed.deacon]++;
+      remember(state.recent, '3-18:30', wed.preacher);
+      remember(state.recentDeacon, '3-18:30', wed.deacon);
+    }
+    const pM = pin['3-08:15'];
+    if (pM) {
+      const a = pM.assign || {};
+      out['3-08:15'] = { celebrant: a.celebrant || null, preacher: a.preacher || null };
+      adopt(pM);
+    } else {
+      const pr = bestPreacher(state, weekPreach, weekIdx, PIDS, { slot: '3-08:15' }, settings);
+      let cel;
+      if (CELEBRANT_ELIGIBLE.includes(pr)) {
+        cel = pr;
+      } else {
+        const opts2 = CELEBRANT_ELIGIBLE.filter(c => pairAllowed(c, pr))
+          .map(c => ({ c, s: state.celebrantDuty[c] + jit(state, 2.5) }));
+        opts2.sort((x, y) => x.s - y.s);
+        cel = opts2.length ? opts2[0].c : 'LG';
+      }
+      out['3-08:15'] = { celebrant: cel, preacher: pr };
+      remember(state.recent, '3-08:15', pr);
+      recordSermon(state, weekPreach, weekIdx, pr);
+      state.celebrantDuty[cel]++;
+    }
+  } else {
   const pWed = pin['3-08:15'];
   if (pWed) {
     const a = pWed.assign || {};
@@ -801,6 +896,7 @@ function assignWeek(state, sunday, settings, ctx) {
   state.eveningPrayerDuty[ep]++;
   state.totalEP++;
   remember(state.recent, '3-18:30', ep);
+  }
   }
 
   /* 5. Monday and Friday Matins. */
@@ -857,7 +953,7 @@ function generateRange(startISO, endISO, settings, existing = []) {
     const wkFrom = iso(sunday), wkTo = iso(addDays(sunday, 6));
     const pins = fixed.filter(s => s.date >= wkFrom && s.date <= wkTo);
     const week = assignWeek(state, sunday, settings, { pins, startISO, endISO });
-    for (const tpl of WEEKLY_TEMPLATE) {
+    for (const tpl of templateForWeek(sunday)) {
       const day = addDays(sunday, tpl.dow);
       const dISO = iso(day);
       if (dISO < startISO || dISO > endISO) continue;
@@ -878,6 +974,260 @@ function generateRange(startISO, endISO, settings, existing = []) {
   }
   return [...keep, ...built].sort((a, b) =>
     (a.date + a.time).localeCompare(b.date + b.time));
+}
+
+/* ---------- fill only the empty roles ----------
+   For services that already exist — kept, added by hand, edited — with a role checked but
+   nobody assigned. Fills just those blanks, by the same rules the generator follows (the
+   approved pairings, Evening Prayer's one man, the Sunday celebrants alternating, Tuesday and
+   Thursday Matins following Sunday's preacher, the weekly sermon limit, Fr. Leckband's
+   interval, and the weights). Nobody already assigned is ever changed, and no service is
+   added or removed. Returns { services, changed, filled, left }: the whole list with the
+   filled services replaced by copies, which services changed, how many roles were filled,
+   and any role the rules left no one for. */
+function fillEmptyRoles(existing, startISO, endISO, settings) {
+  settings = { ...DEFAULT_SETTINGS, ...settings };
+  const live = existing.filter(s => !s.deleted);
+  const inRange = s => s.date >= startISO && s.date <= endISO;
+  const wkOf = s => weekIndexOf(startOfWeek(fromISO(s.date)));
+  const asg = s => s.assign || {};
+  const senior = p => CELEBRANT_ELIGIBLE.includes(p);
+  const bump = (obj, k) => { if (k in obj) obj[k]++; };
+
+  const state = seedState(makeState(settings), existing, startISO, settings);
+  /* what is already assigned inside the range counts toward the balance */
+  for (const s of live) {
+    if (!inRange(s)) continue;
+    const a = asg(s);
+    if (a.preacher && a.preacher in state.sermons) { state.sermons[a.preacher]++; state.totalSermons++; }
+    bump(state.celebrantDuty, a.celebrant);
+    bump(state.deaconDuty, a.deacon);
+    if (s.name === 'Evening Prayer' && a.celebrant in state.eveningPrayerDuty) {
+      state.eveningPrayerDuty[a.celebrant]++; state.totalEP++;
+    }
+  }
+  /* every sermon Fr. Leckband already has, anywhere, keeps the interval around it */
+  state.pinnedLk = live.filter(s => asg(s).preacher === 'LK').map(wkOf);
+
+  const weekPreach = {}, sunCelBy = {}, sunPreBy = {};
+  for (const s of live) {
+    const a = asg(s), w = wkOf(s);
+    if (a.preacher) { (weekPreach[w] ||= {}); weekPreach[w][a.preacher] = (weekPreach[w][a.preacher] || 0) + 1; }
+    if (fromISO(s.date).getDay() === 0 && s.roles.includes('deacon')) {
+      if (a.celebrant) sunCelBy[w] = a.celebrant;
+      if (a.preacher) sunPreBy[w] = a.preacher;
+    }
+  }
+  const other = c => (c === 'LG' ? 'SU' : 'LG');
+  /* Sunday's celebrant for a week: the one in place, else the opposite of a neighbouring
+     Sunday's, else the usual alternation. */
+  const sunCelFor = w => sunCelBy[w] ||
+    (sunCelBy[w - 1] && other(sunCelBy[w - 1])) || (sunCelBy[w + 1] && other(sunCelBy[w + 1])) ||
+    ((w + settings.alternationAnchor) % 2 === 0 ? 'LG' : 'SU');
+
+  const pickSenior = opts => {
+    if (!opts.length) return null;
+    const sc = opts.map(c => ({ c, s: state.celebrantDuty[c] + jit(state, 2.5) }));
+    sc.sort((x, y) => (x.s - y.s) || (PIDS.indexOf(x.c) - PIDS.indexOf(y.c)));
+    return sc[0].c;
+  };
+
+  /* Decide the blank roles of one service; writes them into a. */
+  function decide(sv, a, w, wp) {
+    const has = r => sv.roles.includes(r);
+    const dow = fromISO(sv.date).getDay();
+    const slot = slotKey(sv);
+    const optsP = { sunday: dow === 0, slot };
+    const isDS = sv.name.startsWith('Divine Service');
+
+    /* Evening Prayer: one man liturgises and preaches */
+    if (sv.name === 'Evening Prayer') {
+      let who = a.celebrant || a.preacher || null;
+      if (!who) {
+        const cands = PIDS.filter(p => !has('preacher') || canPreach(state, wp, w, p, { sunday: dow === 0 }, settings));
+        const base = (cands.length ? cands : PIDS).map(p => ({ p, d: epDeficit(state, p) }));
+        const sc = base.map(({ p, d }) => ({ p,
+          s: d + jit(state, TUNE.jitter) - repeatCost(state, slot, p, leadOf(base, p), TUNE.last * 0.75, TUNE.prior * 0.7) }));
+        sc.sort((x, y) => (y.s - x.s) || (state.eveningPrayerDuty[x.p] - state.eveningPrayerDuty[y.p]) ||
+          (PIDS.indexOf(x.p) - PIDS.indexOf(y.p)));
+        who = sc[0].p;
+      }
+      if (has('celebrant') && !a.celebrant) a.celebrant = who;
+      if (has('preacher') && !a.preacher) a.preacher = who;
+      if (has('deacon') && !a.deacon) {
+        const ps = (has('subdeacon') ? PIDS.filter(p => p !== who) : partnersFor(who)).filter(p => p !== a.subdeacon);
+        ps.sort((x, y) => (state.deaconDuty[x] - state.deaconDuty[y]) || (PIDS.indexOf(x) - PIDS.indexOf(y)));
+        if (ps.length) a.deacon = ps[0];
+      }
+      if (has('subdeacon') && !a.subdeacon) {
+        const os = PIDS.filter(p => p !== who && p !== a.deacon);
+        if (os.length) a.subdeacon = os[0];
+      }
+      return;
+    }
+
+    /* a service with a deacon: celebrant, deacon and preacher (and a rare subdeacon) */
+    if (has('deacon')) {
+      const high = has('subdeacon'), pre = a.preacher;
+      const inMin = x => !!x && [a.celebrant, a.deacon, a.subdeacon].includes(x);
+      if (has('celebrant') && !a.celebrant) {
+        let opts = CELEBRANT_ELIGIBLE.filter(c => c !== a.deacon && c !== a.subdeacon);
+        if (a.deacon && !high) opts = opts.filter(c => pairAllowed(c, a.deacon));
+        if (pre && !inMin(pre) && !a.deacon && !a.subdeacon && !high)
+          opts = senior(pre) ? opts.filter(c => c === pre) : opts.filter(c => pairAllowed(c, pre));
+        let want = null;
+        if (isDS && dow === 0) want = sunCelFor(w);
+        else if (isDS && dow === 3) want = other(sunCelFor(w));
+        a.celebrant = (want && opts.includes(want)) ? want : pickSenior(opts);
+      }
+      if (!a.celebrant) return;
+      if (has('deacon') && !a.deacon) {
+        let partners = (high ? PIDS.filter(p => p !== a.celebrant) : partnersFor(a.celebrant))
+          .filter(p => p !== a.subdeacon);
+        if (pre && pre !== a.celebrant && !high) partners = partners.filter(p => p === pre);
+        let done = false;
+        if (has('preacher') && !pre && !high) {
+          const r = pickDeaconAndPreacher(state, wp, w, a.celebrant, optsP, settings);
+          if (r && partners.includes(r.deacon)) { a.deacon = r.deacon; a.preacher = r.preacher; done = true; }
+        }
+        if (!done && partners.length) {
+          const sc = partners.map(p => ({ p, s: -state.deaconDuty[p] + jit(state, 0.5) }));
+          sc.sort((x, y) => (y.s - x.s) || (PIDS.indexOf(x.p) - PIDS.indexOf(y.p)));
+          a.deacon = sc[0].p;
+        }
+      }
+      if (has('preacher') && !a.preacher) {
+        const cands = [a.celebrant, a.deacon, a.subdeacon].filter(Boolean);
+        if (cands.length) a.preacher = bestPreacher(state, wp, w, cands, optsP, settings);
+      }
+      if (has('subdeacon') && !a.subdeacon) {
+        const opts = PIDS.filter(p => p !== a.celebrant && p !== a.deacon);
+        opts.sort((x, y) => (state.deaconDuty[x] - state.deaconDuty[y]) || (PIDS.indexOf(x) - PIDS.indexOf(y)));
+        if (opts.length) a.subdeacon = opts[0];
+      }
+      return;
+    }
+
+    /* Matins and the rest: a liturgist, and perhaps a preacher */
+    const needC = has('celebrant') && !a.celebrant, needP = has('preacher') && !a.preacher;
+    if (needC && needP) {
+      const pr = bestPreacher(state, wp, w, PIDS, optsP, settings);
+      a.preacher = pr;
+      a.celebrant = senior(pr) ? pr : pickSenior(CELEBRANT_ELIGIBLE.filter(c => pairAllowed(c, pr)));
+    } else if (needP) {
+      const cands = PIDS.filter(p => p === a.celebrant || pairAllowed(a.celebrant, p));
+      a.preacher = bestPreacher(state, wp, w, cands.length ? cands : PIDS, optsP, settings);
+    } else if (needC) {
+      let opts = CELEBRANT_ELIGIBLE.slice();
+      if (a.preacher) opts = senior(a.preacher) ? [a.preacher] : opts.filter(c => pairAllowed(c, a.preacher));
+      let want = null;
+      if (!has('preacher') && sv.name === 'Matins' && (dow === 2 || dow === 4)) {
+        const sp = sunPreBy[w];
+        want = senior(sp) ? sp : sunCelFor(w);       // Sunday's preacher takes Tuesday and Thursday
+      }
+      a.celebrant = (want && opts.includes(want)) ? want : pickSenior(opts);
+    }
+  }
+
+  const out = existing.slice(), where = new Map(existing.map((s, i) => [s, i]));
+  const changed = [], left = [], touched = [];
+  let filled = 0;
+  const todo = live.filter(inRange).sort((x, y) => (x.date + x.time).localeCompare(y.date + y.time));
+  for (const sv of todo) {
+    const a0 = asg(sv);
+    const need = sv.roles.filter(r => !a0[r]);
+    if (!need.length) continue;
+    const a = { ...a0 }, w = wkOf(sv), wp = (weekPreach[w] ||= {});
+    decide(sv, a, w, wp);
+    const got = need.filter(r => a[r]);
+    need.filter(r => !a[r]).forEach(r => left.push({ date: sv.date, name: sv.name, role: r }));
+    if (!got.length) continue;
+    if (got.includes('preacher')) recordSermon(state, wp, w, a.preacher);
+    if (got.includes('celebrant')) {
+      bump(state.celebrantDuty, a.celebrant);
+      if (sv.name === 'Evening Prayer') { bump(state.eveningPrayerDuty, a.celebrant); state.totalEP++; }
+    }
+    if (got.includes('deacon')) bump(state.deaconDuty, a.deacon);
+    remember(state.recent, slotKey(sv), a.preacher);
+    remember(state.recentDeacon, slotKey(sv), a.deacon);
+    if (fromISO(sv.date).getDay() === 0 && sv.roles.includes('deacon')) {
+      if (a.celebrant) sunCelBy[w] = a.celebrant;
+      if (a.preacher) sunPreBy[w] = a.preacher;
+    }
+    const ns = { ...sv, assign: { ...a0, ...Object.fromEntries(got.map(r => [r, a[r]])) } };
+    out[where.get(sv)] = ns;
+    touched.push({ i: where.get(sv), sv, a0, got, ns });
+    filled += got.length;
+  }
+
+  /* Repair pass. The greedy fill goes in date order, so an early pick can leave a later,
+     more constrained blank with no good choice (a man already at his weekly limit, Tuesday's
+     Matins already given to someone other than Sunday's preacher, ...). For each service we
+     filled, try the other valid fills of just its blank roles and keep one only if it clears
+     more rule problems nearby than the current one. Assigned roles are never touched. */
+  const problems = list => checkRules(list, settings).filter(x => !/ is unassigned$/.test(x.msg)).length;
+  const live2 = () => out.filter(s => !s.deleted);
+  const nearby = t => {
+    const w = wkOf(t.sv);
+    return out.filter(s => !s.deleted && Math.abs(wkOf(s) - w) <= 6);
+  };
+  const combos = (roles) => roles.reduce((acc, r) => acc.flatMap(c => PIDS.map(p => ({ ...c, [r]: p }))), [{}]);
+  for (let pass = 0; pass < 3; pass++) {
+    let improved = false;
+    for (const t of touched) {
+      const near = nearby(t);
+      const base = problems(near);
+      if (!base) continue;
+      let best = null, bestCost = base;
+      for (const c of combos(t.got)) {
+        const cand = { ...t.sv, assign: { ...t.a0, ...c } };
+        if (problems([cand])) continue;                    // the service itself must be sound
+        const cost = problems(near.map(s => (s === out[t.i] ? cand : s)));
+        if (cost < bestCost) { best = cand; bestCost = cost; }
+      }
+      if (best) { out[t.i] = best; t.ns = best; improved = true; }
+    }
+    if (!improved) break;
+  }
+  /* Weeks that still have a problem: search the combinations of fills for the blank roles in
+     that week together (a Sunday preacher, a Monday preacher and Tuesday's celebrant can all
+     depend on one another). A branch is dropped as soon as it can't beat the best found. */
+  const probWeeks = new Set(checkRules(live2(), settings)
+    .filter(x => x.date && !/ is unassigned$/.test(x.msg))
+    .map(x => weekIndexOf(startOfWeek(fromISO(x.date)))));
+  for (const w of probWeeks) {
+    /* the blanks of this week, plus any Leckband sermon we gave out within his interval of it
+       (moving that one elsewhere can free him for this week) */
+    const mine = touched.filter(t => wkOf(t.sv) === w);
+    if (!mine.length) continue;
+    const lkNear = touched.filter(t => !mine.includes(t) && t.got.includes('preacher') && t.ns.assign.preacher === 'LK' &&
+      Math.abs(wkOf(t.sv) - w) < settings.leckbandInterval);
+    const ts = [...mine, ...lkNear].slice(0, 8).sort((x, y) => (x.sv.date + x.sv.time).localeCompare(y.sv.date + y.sv.time));
+    const near = out.filter(s => !s.deleted && Math.abs(wkOf(s) - w) <= 6);
+    const slot = ts.map(t => near.indexOf(out[t.i]));
+    if (slot.some(i => i < 0)) continue;
+    const cur = ts.map(t => out[t.i]);
+    let bestCost = problems(near), best = null, nodes = 0;
+    if (!bestCost) continue;
+    const opts = ts.map(t => combos(t.got).map(c => ({ ...t.a0, ...c })).filter(asg => !problems([{ ...t.sv, assign: asg }])));
+    ts.forEach((t, k) => { near[slot[k]] = { ...t.sv, assign: t.a0 }; });
+    const dfs = k => {
+      for (const asg of opts[k]) {
+        if (++nodes > 3000) return;
+        near[slot[k]] = { ...ts[k].sv, assign: asg };
+        const cost = problems(near);
+        if (cost < bestCost) {
+          if (k === ts.length - 1) { bestCost = cost; best = ts.map((t, j) => near[slot[j]]); }
+          else dfs(k + 1);
+        }
+      }
+      near[slot[k]] = { ...ts[k].sv, assign: ts[k].a0 };
+    };
+    dfs(0);
+    if (best) ts.forEach((t, j) => { out[t.i] = best[j]; t.ns = best[j]; });
+  }
+  for (const t of touched) changed.push(t.ns);
+  return { services: out, changed, filled, left };
 }
 
 /* ---------- rule checker: validates the schedule after hand edits ---------- */
@@ -1000,7 +1350,7 @@ if (typeof module !== 'undefined' && module.exports) {
     PASTORS, PIDS, PMAP, PAIRS, ROLES, ROLE_LABEL, ROLE_SHORT,
     CELEBRANT_ELIGIBLE, WEEKLY_TEMPLATE, DEFAULT_SETTINGS,
     iso, fromISO, addDays, startOfWeek, weekIndexOf, partnersFor, pairAllowed,
-    generateRange, checkRules, tally, effectiveTargets,
+    generateRange, fillEmptyRoles, checkRules, tally, effectiveTargets, seasonOf, easterOf, templateForWeek,
   };
 }
 
@@ -1016,8 +1366,8 @@ const DOW_LONG = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','S
 const DOW_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const MONTHS = ['January','February','March','April','May','June','July',
                 'August','September','October','November','December'];
-const SERVICE_NAMES = ['Divine Service','Matins','Evening Prayer','Vespers','Compline',
-                       'Divine Service — Feast','Funeral','Wedding','Confirmation'];
+const SERVICE_KINDS = ['Divine Service','Matins','Evening Prayer','Compline',
+                       'Good Friday Chief Service','Tenebrae Vespers','Lessons & Carols','Easter Vigil'];
 
 /* Liturgical calendar, drawn from The Lutheran Missal (2025–2026 and 2026–2027).
    Keyed by ISO date. Each entry: { dow, entries: [{name, readings?, comm?, color?}] }
@@ -1334,13 +1684,44 @@ function regularWeekday(dateISO) {
   return null;
 }
 
-/* The day's own appointed readings — one line per entry that has any. */
-function ownReadingLines(dateISO) {
+/* The entries of a day that carry readings of their own. */
+function readingEntries(dateISO) {
   const day = litOn(dateISO);
-  if (!day) return [];
-  const withR = day.entries.filter(e => readingParts(e.readings).length);
-  return withR.map(e => ({
-    label: withR.length > 1 ? e.name : 'Readings',
+  return day ? day.entries.filter(e => readingParts(e.readings).length) : [];
+}
+/* Some days have several sets of readings — Christmas (Midnight, Dawn, Day), the Vigil of
+   All Saints beside Reformation Day, and so on. A service reads from the set that belongs to
+   its time of day: an entry's part of the day comes from its name, a service's from its time. */
+function entryDaypart(name) {
+  if (/\bMidnight\b/i.test(name)) return 'midnight';
+  if (/\bDawn\b/i.test(name)) return 'dawn';
+  if (/\bVigil\b/i.test(name)) return 'eve';
+  if (/(?:[–-]\s*|\()Day\)?\s*$/.test(name)) return 'day';
+  return null;
+}
+function timeDaypart(t) {
+  const h = Number(String(t).slice(0, 2));
+  return h < 4 ? 'midnight' : h < 9 ? 'dawn' : h < 17 ? 'day' : 'eve';
+}
+/* Which of the day's sets a given service reads from. A choice made on the service itself
+   (s.rdg) wins; the only service of a day takes everything; otherwise go by time of day. */
+function entriesForService(dateISO, s) {
+  const list = readingEntries(dateISO);
+  if (list.length < 2 || !s) return list;
+  if (s.rdg === 'all') return list;
+  if (s.rdg) { const hit = list.find(e => e.name === s.rdg); if (hit) return [hit]; }
+  if (onDate(dateISO).length < 2) return list;
+  const part = timeDaypart(s.time);
+  const exact = list.filter(e => entryDaypart(e.name) === part);
+  if (exact.length) return exact;
+  const plain = list.filter(e => !entryDaypart(e.name));
+  return plain.length ? plain : list;
+}
+/* The day's own appointed readings — one line per entry the service reads from. */
+function ownReadingLines(dateISO, s) {
+  const all = readingEntries(dateISO);
+  return entriesForService(dateISO, s).map(e => ({
+    label: all.length > 1 ? e.name : 'Readings',
     text: readingParts(e.readings).filter(Boolean).join(' / '),
   }));
 }
@@ -1371,11 +1752,11 @@ function cycleReadingLines(dateISO) {
   }
   return [];
 }
-function readingsFor(dateISO) {
+function readingsFor(dateISO, s) {
   const dow = fromISO(dateISO).getDay();
   if (dow === 1 || dow === 2 || dow === 4) {
     if (weekdayReadingsMode(litOn(dateISO)) === 'own') {
-      const own = ownReadingLines(dateISO);
+      const own = ownReadingLines(dateISO, s);
       if (own.length) return own.map(l => ({ ...l, tip: `This day's own readings, not the Sunday cycle` }));
     }
     return cycleReadingLines(dateISO);
@@ -1385,10 +1766,10 @@ function readingsFor(dateISO) {
     if (reg) return [{ label: 'Readings', text: reg.text,
       tip: `The regular readings (${reg.name}), not the day's feast` }];
   }
-  return ownReadingLines(dateISO);
+  return ownReadingLines(dateISO, s);
 }
-function readingsBlock(dateISO) {
-  const lines = readingsFor(dateISO);
+function readingsBlock(dateISO, s) {
+  const lines = readingsFor(dateISO, s);
   if (!lines.length) return '';
   return `<div class="rdgs">${lines.map(l => `<div class="rdline"${l.tip ? ` title="${esc(l.tip)}"` : ''}>
       <span class="rdl">${esc(l.label)}</span><span class="rdt">${esc(l.text)}</span></div>`).join('')}</div>`;
@@ -1779,7 +2160,7 @@ function renderWeek() {
           <div class="wkmen">
             ${chipsFor(s, true)}
           </div>
-          ${i === 0 ? readingsBlock(ds) : ''}
+          ${readingsBlock(ds, s)}
           <div class="notewrap">
             <textarea class="noteinput${s.notes ? ' has' : ''}" data-svc="${s.id}"
               placeholder="Add a note for the team…" rows="1">${esc(s.notes || '')}</textarea>
@@ -1822,15 +2203,17 @@ function renderMonth() {
       ${feast && feast.color ? ' lit' : ''}"${litStyle}>
       <div class="dhd" data-editday="${ds}" title="Edit this day's name and color">
         <div class="dnum">${d.getDate()}<span class="dwm">${DOW_LONG[d.getDay()]}</span></div></div>
+      <button class="cadd" data-add="${ds}" title="Add a service on ${fmtDateLong(ds)}"
+        aria-label="Add a service on ${fmtDateLong(ds)}"><span class="pl">+</span><span class="tx">Add</span></button>
       ${feast ? `<div class="feast" title="${esc(feast.all.map(x => x.name).join(' · '))}">
         ${esc(feast.name)}${feast.extra ? `<span class="more"> +${feast.extra}</span>` : ''}</div>` : ''}`;
     for (const s of list) {
-      h += `<div class="svc${s.special ? ' spc' : ''}" data-goto="${ds}">
+      h += `<div class="svc${s.special ? ' spc' : ''}" data-editsvc="${s.id}" title="Edit this service">
         <div class="t"><span class="nm">${esc(s.name)}</span><span>${fmtTime(s.time)}</span></div>
         <div class="men">${chipsFor(s)}</div></div>`;
     }
     if (!list.length && !out) {
-      h += `<div class="noSvc">No service <button class="addln" data-add="${ds}">+ add</button></div>`;
+      h += `<div class="noSvc">No service</div>`;
     }
     h += `</div>`;
   }
@@ -2122,7 +2505,8 @@ function openAdd(dateISO, editId) {
   const editing = !!existing;
   const d = editing ? existing.date : (dateISO || iso(App.cursor));
   const t = editing ? existing.time : '18:30';
-  const n = editing ? existing.name : 'Divine Service — Feast';
+  const n = editing ? existing.name : 'Divine Service';
+  const isOther = !SERVICE_KINDS.includes(n);
 
   openDlg(editing ? 'Edit service' : 'Add a service', `
     <div class="grp2">
@@ -2132,9 +2516,18 @@ function openAdd(dateISO, editId) {
         <input type="time" id="asTime" value="${t}"></div>
     </div>
     <div class="lit-suggest" id="asLit"></div>
-    <div class="fld"><label for="asName">Service</label>
-      <input type="text" id="asName" list="svcNames" value="${esc(n)}">
-      <datalist id="svcNames">${SERVICE_NAMES.map(x => `<option value="${esc(x)}">`).join('')}</datalist>
+    <div class="fld"><label for="asKind">Service</label>
+      <select id="asKind">
+        ${SERVICE_KINDS.map(k => `<option value="${esc(k)}"${!isOther && k === n ? ' selected' : ''}>${esc(k)}</option>`).join('')}
+        <option value="__other"${isOther ? ' selected' : ''}>Other…</option>
+      </select>
+      <input type="text" id="asName" value="${isOther ? esc(n) : ''}" placeholder="Name of the service"
+        style="margin-top:6px${isOther ? '' : ';display:none'}">
+    </div>
+    <div class="fld" id="asRdgFld" style="display:none"><label for="asRdg">Readings for this service</label>
+      <select id="asRdg"></select>
+      <div class="hint">This day has more than one set of readings. Automatic picks the one
+        that matches the service's time of day.</div>
     </div>
     <div class="fld"><label>Roles &amp; who's serving</label>
       <div class="roleassign">
@@ -2166,6 +2559,27 @@ function openAdd(dateISO, editId) {
     cb.addEventListener('change', () => { sel.disabled = !cb.checked; });
   });
 
+  const syncKind = () => {
+    const other = el('asKind').value === '__other';
+    el('asName').style.display = other ? '' : 'none';
+    if (other && !el('asName').value) el('asName').focus();
+  };
+  el('asKind').addEventListener('change', syncKind);
+
+  /* Which set of readings this service reads from — only offered on days that have several. */
+  let rdgChoice = (existing && existing.rdg) || '';
+  const refreshRdg = () => {
+    const list = readingEntries(el('asDate').value), sel = el('asRdg');
+    el('asRdgFld').style.display = list.length > 1 ? '' : 'none';
+    sel.innerHTML = `<option value="">Automatic</option>` +
+      list.map(e => `<option value="${esc(e.name)}">${esc(e.name)}</option>`).join('') +
+      `<option value="all">All of them</option>`;
+    sel.value = [...sel.options].some(o => o.value === rdgChoice) ? rdgChoice : '';
+  };
+  el('asRdg').addEventListener('change', () => { rdgChoice = el('asRdg').value; });
+  el('asDate').addEventListener('change', refreshRdg);
+  refreshRdg();
+
   const refreshLit = () => {
     const box = el('asLit');
     const existing = litOn(el('asDate').value);
@@ -2190,14 +2604,19 @@ function openAdd(dateISO, editId) {
         <button type="button" id="asUseFeast">Use this as the service name</button>
        </div>`;
     const btn = el('asUseFeast');
-    if (btn) btn.onclick = () => { el('asName').value = el('asDayName').value; };
+    if (btn) btn.onclick = () => {
+      el('asKind').value = '__other'; syncKind();
+      el('asName').value = el('asDayName').value;
+    };
   };
   el('asDate').addEventListener('change', refreshLit);
   refreshLit();
 
   el('asSave').onclick = async () => {
     const date = el('asDate').value, time = el('asTime').value;
-    const name = el('asName').value.trim() || 'Service';
+    const kindV = el('asKind').value;
+    const name = kindV === '__other' ? el('asName').value.trim() : kindV;
+    if (!name) { toast('Type a name for the service.'); el('asName').focus(); return; }
     const roles = [], assign = {};
     document.querySelectorAll('.rarow').forEach(row => {
       const cb = row.querySelector('.asRole');
@@ -2207,6 +2626,7 @@ function openAdd(dateISO, editId) {
     if (!date || !time || !roles.length) {
       toast('A date, a time, and at least one role are needed.'); return;
     }
+    const rdgV = el('asRdgFld').style.display === 'none' ? '' : el('asRdg').value;
     const newYear = Number(date.slice(0, 4));
     await ensureYears([newYear]);
 
@@ -2225,23 +2645,25 @@ function openAdd(dateISO, editId) {
       const oldYear = yearOf(existing);
       existing.date = date; existing.time = time; existing.name = name;
       existing.roles = roles; existing.assign = assign;
+      if (rdgV) existing.rdg = rdgV; else delete existing.rdg;
       existing.locked = true;
       App.services.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
       markDirty([...new Set([oldYear, newYear])]);
       App.cursor = fromISO(date);
-      App.view = 'week';
+      if (App.view === 'year') App.view = 'week';
       closeAll(); render();
       toast(`Updated ${esc(name)}.`);
     } else {
       App.services.push({
         id: `sp-${date}-${time.replace(':','')}-${Math.random().toString(36).slice(2,7)}`,
         date, time, name, roles, assign,
+        ...(rdgV ? { rdg: rdgV } : {}),
         locked: true, special: true,
       });
       App.services.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
       markDirty([newYear]);
       App.cursor = fromISO(date);
-      App.view = 'week';
+      if (App.view === 'year') App.view = 'week';
       closeAll(); render();
       toast(`Added ${esc(name)} on ${date}.`);
     }
@@ -2252,6 +2674,12 @@ function openAdd(dateISO, editId) {
 function openGenerate() {
   const y = App.cursor.getFullYear(), m = App.cursor.getMonth();
   openDlg('Fill schedule', `
+    <div class="fld"><label>What to do</label>
+      <div class="kbseg">
+        <label><input type="radio" name="gnMode" value="all" checked> Fill the schedule</label>
+        <label><input type="radio" name="gnMode" value="empty"> Fill empty roles only</label>
+      </div>
+    </div>
     <div class="fld"><label>Range</label>
       <select id="gnScope">
         <option value="year">All of ${y}</option>
@@ -2267,15 +2695,48 @@ function openGenerate() {
         off for the strict, predictable rotation.</span></span></label>
     </div>
     <div class="fld"><label>What happens</label>
-      <div class="hint">The weekly pattern is written across the range and the men are assigned
-      from the parish rules. Anything you marked <b>Kept</b>, anything you added by hand, and
-      anything you removed all stay as they are. Everything else is rewritten.</div>
+      <div class="hint" id="gnWhat"></div>
+      <div class="hint" id="gnInfo" style="margin-top:6px;color:var(--ink)"></div>
     </div>`,
     `<button class="btn2" data-close>Cancel</button>
      <button class="btn2 gold" id="gnGo">Fill it</button>`);
+
+  const WHAT = {
+    all: `The weekly pattern is written across the range and the men are assigned
+      from the parish rules. Anything you marked <b>Kept</b>, anything you added by hand, and
+      anything you removed all stay as they are. Everything else is rewritten.`,
+    empty: `Only the roles that are checked but have no one assigned are filled, by the same
+      parish rules. Nobody already assigned is changed, and no services are added or removed —
+      Kept, hand-added and edited services are all included.`,
+  };
+  const genRange = () => {
+    const scope = el('gnScope').value;
+    if (scope === 'year') return [`${y}-01-01`, `${y}-12-31`];
+    if (scope === 'month') return [iso(new Date(y, m, 1)), iso(new Date(y, m + 1, 0))];
+    return [iso(new Date(y, m, 1)), `${y}-12-31`];
+  };
+  const genMode = () => document.querySelector('input[name=gnMode]:checked').value;
+  const refreshGen = () => {
+    const mode = genMode();
+    el('gnWhat').innerHTML = WHAT[mode];
+    el('gnGo').textContent = mode === 'empty' ? 'Fill empty roles' : 'Fill it';
+    if (mode === 'empty') {
+      const [a, b] = genRange();
+      const sv = App.services.filter(s => !s.deleted && s.date >= a && s.date <= b);
+      const blanks = sv.map(s => s.roles.filter(r => !(s.assign && s.assign[r])).length);
+      const roles = blanks.reduce((x, z) => x + z, 0), n = blanks.filter(Boolean).length;
+      el('gnInfo').textContent = roles
+        ? `In this range: ${roles} empty role${roles === 1 ? '' : 's'} on ${n} service${n === 1 ? '' : 's'}.`
+        : 'There are no empty roles in this range.';
+    } else el('gnInfo').textContent = '';
+  };
+  document.querySelectorAll('input[name=gnMode]').forEach(r => r.addEventListener('change', refreshGen));
+  el('gnScope').addEventListener('change', refreshGen);
+  refreshGen();
   el('gnGo').onclick = async () => {
     const scope = el('gnScope').value;
     const mix = el('gnMix').checked;   // read now: the dialog closes just below
+    const emptyOnly = genMode() === 'empty';
     let a, b;
     if (scope === 'year') { a = `${y}-01-01`; b = `${y}-12-31`; }
     else if (scope === 'month') {
@@ -2284,6 +2745,24 @@ function openGenerate() {
     closeAll();
     setSync('saving', 'filling…');
     await ensureYears([y]);
+    if (emptyOnly) {
+      const seedE = mix ? Math.floor(Math.random() * 2147483646) + 1 : null;
+      const res = fillEmptyRoles(App.services, a, b, seedE == null ? App.settings : { ...App.settings, seed: seedE });
+      if (!res.changed.length) {
+        setSync('idle', 'saved');
+        toast(res.left.length
+          ? `Couldn't fill ${res.left.length} role${res.left.length === 1 ? '' : 's'} without breaking a rule — those need doing by hand.`
+          : 'There were no empty roles to fill in that range.');
+        return;
+      }
+      App.services = res.services.sort((x, z) => (x.date + x.time).localeCompare(z.date + z.time));
+      markDirty([...new Set(res.changed.map(yearOf))]);
+      render();
+      const n = res.changed.length;
+      toast(`Filled ${res.filled} empty role${res.filled === 1 ? '' : 's'} on ${n} service${n === 1 ? '' : 's'}.` +
+        (res.left.length ? ` ${res.left.length} couldn't be filled without breaking a rule.` : ''), 5200);
+      return;
+    }
     const others = App.services.filter(s => !s.date.startsWith(String(y)));
     const mine = App.services.filter(s => s.date.startsWith(String(y)));
     const seed = mix ? Math.floor(Math.random() * 2147483646) + 1 : null;
