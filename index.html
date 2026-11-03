@@ -85,7 +85,10 @@
        letter-spacing:.16em;text-transform:uppercase;padding:6px 8px;text-align:left}
   .cell{background:var(--sheet);min-height:112px;padding:6px 7px 8px;position:relative}
   .cell.out{background:#F6F4F0}
-  .cell.today{box-shadow:inset 0 2px 0 var(--brass)}
+  .cell.today{background:#FFF5D6;box-shadow:inset 0 0 0 2px var(--brass);z-index:1}
+  .cell.today .dd{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;
+                  padding:0 5px;border-radius:12px;background:var(--brass);color:#fff;font-weight:700}
+  .cell.today .dwm{color:var(--brass);font-weight:700}
   .cell.lit::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
                     background:var(--lc,transparent)}
   .cell .dhd{display:flex;align-items:baseline;gap:5px;flex-wrap:wrap;cursor:pointer;
@@ -93,7 +96,7 @@
   .cell .dhd:hover{background:rgba(0,0,0,.05)}
   .cell .dnum{font-family:var(--font-display);font-size:16px;color:var(--ink);line-height:1}
   .cell.out .dnum{color:var(--mute-2)}
-  .cell.today .dnum{color:var(--brass);font-weight:700}
+  .cell.today .dnum{color:#fff;font-weight:700}
   .cell .dwm{margin-left:7px;font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;
              text-transform:uppercase;color:var(--mute);vertical-align:1px}
   .feast{font-size:9.5px;color:var(--mute);line-height:1.25;overflow:hidden;
@@ -142,7 +145,14 @@
   .gut .dw{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.16em;
            text-transform:uppercase;color:var(--mute)}
   .gut .dn{font-family:var(--font-display);font-size:26px;line-height:1.05}
-  .gut.today .dn{color:var(--brass)}
+  .gut.today .dn{width:40px;height:40px;line-height:40px;margin:2px auto 0;border-radius:50%;
+                 background:var(--brass);color:#fff;font-weight:700}
+  .gut.today .dw{color:var(--brass);font-weight:700}
+  .row.tdy{background:#FFF5D6;box-shadow:inset 5px 0 0 var(--brass)}
+  .row.tdy .gut{border-right-color:#EBDDAA}
+  .row.tdy.tdyf{box-shadow:inset 5px 0 0 var(--brass),inset 0 2px 0 var(--brass)}
+  .row.tdy.tdyl{box-shadow:inset 5px 0 0 var(--brass),inset 0 -2px 0 var(--brass)}
+  .row.tdy.tdyf.tdyl{box-shadow:inset 5px 0 0 var(--brass),inset 0 2px 0 var(--brass),inset 0 -2px 0 var(--brass)}
   .gut .lit{display:flex;align-items:center;gap:4px;justify-content:center;margin-top:4px;
             font-size:9.5px;color:var(--mute);line-height:1.2;max-width:82px}
   .gut .lit .sw{width:6px;height:6px;border-radius:50%;flex:0 0 auto}
@@ -2140,13 +2150,13 @@ function renderWeek() {
       </div>` : ''}</div>`;
 
     if (!list.length) {
-      h += `<div class="row dim">${gut(true)}<div class="body">
+      h += `<div class="row dim${isToday ? ' tdy tdyf tdyl' : ''}">${gut(true)}<div class="body">
         <div class="hd"><span class="nm" style="color:var(--mute);font-size:14px">No services</span>
         <span class="rowacts"><button class="tinybtn" data-add="${ds}">Add one</button></span></div>
       </div></div>`;
     } else {
       list.forEach((s, i) => {
-        h += `<div class="row">${gut(i === 0)}<div class="body">
+        h += `<div class="row${isToday ? ` tdy${i === 0 ? ' tdyf' : ''}${i === list.length - 1 ? ' tdyl' : ''}` : ''}">${gut(i === 0)}<div class="body">
           <div class="hd">
             <span class="nm">${esc(s.name)}</span>
             <span class="tm">${fmtTime(s.time)}</span>
@@ -2205,7 +2215,7 @@ function renderMonth() {
     h += `<div class="cell${out ? ' out' : ''}${ds === todayISO ? ' today' : ''}
       ${feast && feast.color ? ' lit' : ''}"${litStyle}>
       <div class="dhd" data-editday="${ds}" title="Edit this day's name and color">
-        <div class="dnum">${d.getDate()}<span class="dwm">${DOW_LONG[d.getDay()]}</span></div></div>
+        <div class="dnum"><span class="dd">${d.getDate()}</span><span class="dwm">${DOW_LONG[d.getDay()]}</span></div></div>
       <button class="cadd" data-add="${ds}" title="Add a service on ${fmtDateLong(ds)}"
         aria-label="Add a service on ${fmtDateLong(ds)}"><span class="pl">+</span><span class="tx">Add</span></button>
       ${feast ? `<div class="feast" title="${esc(feast.all.map(x => x.name).join(' · '))}">
