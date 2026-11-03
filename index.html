@@ -259,6 +259,9 @@
   .fld select{width:100%;padding:8px 9px;border:1px solid var(--rule);border-radius:5px;
               background:var(--sheet)}
   .fld .hint{font-size:11.5px;color:var(--mute);margin-top:5px}
+  #asNotes{display:block;width:100%;padding:8px 9px;border:1px solid var(--rule);border-radius:5px;
+            background:var(--sheet);font:inherit;resize:vertical;min-height:64px}
+  #asNotes:focus-visible{outline:2px solid var(--brass);outline-offset:1px}
   .lit-suggest{display:none;gap:8px;align-items:flex-start;background:#F4F2EC;
                border-left:3px solid var(--brass-lt);padding:8px 10px;border-radius:4px;
                font-size:12px;color:var(--ink);margin-bottom:14px}
@@ -2547,6 +2550,9 @@ function openAdd(dateISO, editId) {
       </div>
       <div class="hint">Uncheck a role to remove it from this service.</div>
     </div>
+    <div class="fld"><label for="asNotes">Notes</label>
+      <textarea id="asNotes" rows="3" placeholder="Add a note for the team…">${esc(editing ? existing.notes || '' : '')}</textarea>
+    </div>
     ${editing && !existing.special ? `<div class="hint" style="margin-top:-6px">
       This is a regular service from the weekly pattern. Saving changes keeps this one
       occurrence exactly as you set it — refilling the schedule later won't touch it.</div>` : ''}`,
@@ -2627,6 +2633,7 @@ function openAdd(dateISO, editId) {
       toast('A date, a time, and at least one role are needed.'); return;
     }
     const rdgV = el('asRdgFld').style.display === 'none' ? '' : el('asRdg').value;
+    const noteV = el('asNotes').value.trim();
     const newYear = Number(date.slice(0, 4));
     await ensureYears([newYear]);
 
@@ -2646,6 +2653,7 @@ function openAdd(dateISO, editId) {
       existing.date = date; existing.time = time; existing.name = name;
       existing.roles = roles; existing.assign = assign;
       if (rdgV) existing.rdg = rdgV; else delete existing.rdg;
+      existing.notes = noteV || null;
       existing.locked = true;
       App.services.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
       markDirty([...new Set([oldYear, newYear])]);
@@ -2658,6 +2666,7 @@ function openAdd(dateISO, editId) {
         id: `sp-${date}-${time.replace(':','')}-${Math.random().toString(36).slice(2,7)}`,
         date, time, name, roles, assign,
         ...(rdgV ? { rdg: rdgV } : {}),
+        ...(noteV ? { notes: noteV } : {}),
         locked: true, special: true,
       });
       App.services.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
