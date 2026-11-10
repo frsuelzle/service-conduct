@@ -20,6 +20,12 @@
     --font-mono:ui-monospace,'SF Mono','Cascadia Mono',Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box}
+  /* On a Home Screen web app, iOS paints the status-bar area from the page's own background.
+     The page itself is pale paper, so the area behind the clock blended pale into the dark header
+     (a grey gradient). Make the canvas behind the header the header's colour; the body still
+     paints the paper over the whole page. */
+  html{background:var(--slate)}
+  body{min-height:100vh;min-height:100dvh}
   body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font-ui);
        font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
   button,select,input{font-family:inherit;font-size:inherit;color:inherit}
