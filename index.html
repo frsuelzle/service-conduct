@@ -163,6 +163,13 @@
   .body .hd .tag{font-family:var(--font-mono);font-size:9px;letter-spacing:.12em;
                  text-transform:uppercase;color:var(--brass);border:1px solid #E0CF95;
                  padding:2px 5px;border-radius:3px}
+  .body .hd .fchip{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--mute);
+                   font-style:italic;max-width:100%}
+  .body .hd .fchip .sw{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--mute-2)}
+  .svc .sf{font-size:10px;font-style:italic;color:var(--mute);white-space:nowrap;overflow:hidden;
+           text-overflow:ellipsis;margin-top:1px}
+  #asFeastBox{margin-top:8px;padding:9px 10px;border:1px solid var(--rule);border-radius:6px;background:#FBFAF6}
+  #asFeastBox .readings-input{margin-top:7px}
   .body .hd .rowacts{margin-left:auto;display:flex;gap:5px}
   .tinybtn{background:#F1EFE9;border:1px solid var(--rule);border-radius:4px;cursor:pointer;
            font-size:11px;padding:3px 8px;color:var(--mute)}
@@ -1763,6 +1770,11 @@ function cycleReadingLines(dateISO) {
   return [];
 }
 function readingsFor(dateISO, s) {
+  /* a service that observes a feast of its own reads that feast's readings, whatever the day says */
+  if (s && s.feast) {
+    const t = readingParts(s.feast.readings).filter(Boolean).join(' / ');
+    return t ? [{ label: 'Readings', text: t, tip: `Readings for ${s.feast.name}, observed at this service only` }] : [];
+  }
   const dow = fromISO(dateISO).getDay();
   if (dow === 1 || dow === 2 || dow === 4) {
     if (weekdayReadingsMode(litOn(dateISO)) === 'own') {
@@ -2157,6 +2169,8 @@ function renderWeek() {
           <div class="hd">
             <span class="nm">${esc(s.name)}</span>
             <span class="tm">${fmtTime(s.time)}</span>
+            ${s.feast ? `<span class="fchip" title="This service observes ${esc(s.feast.name)}, apart from the rest of the day">
+              <span class="sw"${s.feast.color && LIT_COLOR[s.feast.color] ? ` style="background:${LIT_COLOR[s.feast.color]}"` : ''}></span>${esc(s.feast.name)}</span>` : ''}
             ${s.special ? '<span class="tag">Added</span>' : ''}
             ${s.locked ? '<span class="tag">Kept</span>' : ''}
             <span class="rowacts">
@@ -2220,6 +2234,7 @@ function renderMonth() {
     for (const s of list) {
       h += `<div class="svc${s.special ? ' spc' : ''}" data-editsvc="${s.id}" title="Edit this service">
         <div class="t"><span class="nm">${esc(s.name)}</span><span>${fmtTime(s.time)}</span></div>
+        ${s.feast ? `<div class="sf" title="${esc(s.feast.name)}">${esc(s.feast.name)}</div>` : ''}
         <div class="men">${chipsFor(s)}</div></div>`;
     }
     if (!list.length && !out) {
@@ -2539,6 +2554,24 @@ function openAdd(dateISO, editId) {
       <div class="hint">This day has more than one set of readings. Automatic picks the one
         that matches the service's time of day.</div>
     </div>
+    <div class="fld" id="asFeastFld">
+      <label style="display:flex;gap:8px;align-items:flex-start;font-family:var(--font-ui);font-size:13px;letter-spacing:0;text-transform:none;color:var(--ink);cursor:pointer"><input type="checkbox" id="asFeastOn" style="margin-top:3px"${editing && existing.feast ? ' checked' : ''}>
+        This service observes a different feast than the rest of the day</label>
+      <div id="asFeastBox"${editing && existing.feast ? '' : ' style="display:none"'}>
+        <div class="litedit">
+          <input type="text" id="asFeastName" value="${esc(editing && existing.feast ? existing.feast.name : '')}"
+            placeholder="Feast or observance for this service">
+          <select id="asFeastColor">
+            <option value="">— none —</option>
+            ${Object.keys(LIT_LABEL).map(c => `<option value="${c}"${editing && existing.feast && existing.feast.color === c ? ' selected' : ''}>${LIT_LABEL[c]}</option>`).join('')}
+          </select>
+        </div>
+        <textarea id="asFeastReadings" class="readings-input" rows="2"
+          placeholder="Readings for this service (leave blank if none)">${esc(editing && existing.feast ? existing.feast.readings || '' : '')}</textarea>
+        <div class="hint">Only this service uses these. The day's own name and readings stay as they
+          are for the day's other services.</div>
+      </div>
+    </div>
     <div class="fld"><label>Roles &amp; who's serving</label>
       <div class="roleassign">
         ${ROLES.map(r => {
@@ -2583,13 +2616,18 @@ function openAdd(dateISO, editId) {
   let rdgChoice = (existing && existing.rdg) || '';
   const refreshRdg = () => {
     const list = readingEntries(el('asDate').value), sel = el('asRdg');
-    el('asRdgFld').style.display = list.length > 1 ? '' : 'none';
+    el('asRdgFld').style.display = list.length > 1 && !el('asFeastOn').checked ? '' : 'none';
     sel.innerHTML = `<option value="">Automatic</option>` +
       list.map(e => `<option value="${esc(e.name)}">${esc(e.name)}</option>`).join('') +
       `<option value="all">All of them</option>`;
     sel.value = [...sel.options].some(o => o.value === rdgChoice) ? rdgChoice : '';
   };
   el('asRdg').addEventListener('change', () => { rdgChoice = el('asRdg').value; });
+  el('asFeastOn').addEventListener('change', () => {
+    el('asFeastBox').style.display = el('asFeastOn').checked ? '' : 'none';
+    if (el('asFeastOn').checked) el('asFeastName').focus();
+    refreshRdg();
+  });
   el('asDate').addEventListener('change', refreshRdg);
   refreshRdg();
 
@@ -2614,6 +2652,8 @@ function openAdd(dateISO, editId) {
           placeholder="Readings (leave blank if none apply)">${esc(first ? first.readings || '' : '')}</textarea>
         ${extra > 0 ? `<div class="rd">+${extra} other entr${extra > 1 ? 'ies' : 'y'}
           this day, unaffected by this</div>` : ''}
+        <div class="rd">These apply to the whole day, so every service that day shows them. To
+          give just one service different readings, use "This service observes a different feast" below.</div>
         <button type="button" id="asUseFeast">Use this as the service name</button>
        </div>`;
     const btn = el('asUseFeast');
@@ -2641,6 +2681,11 @@ function openAdd(dateISO, editId) {
     }
     const rdgV = el('asRdgFld').style.display === 'none' ? '' : el('asRdg').value;
     const noteV = el('asNotes').value.trim();
+    const fName = el('asFeastName').value.trim();
+    if (el('asFeastOn').checked && !fName) { toast("Give this service's feast a name, or uncheck the box."); return; }
+    const feastV = el('asFeastOn').checked ? {
+      name: fName, ...(el('asFeastColor').value ? { color: el('asFeastColor').value } : {}),
+      ...(el('asFeastReadings').value.trim() ? { readings: el('asFeastReadings').value.trim() } : {}) } : null;
     const newYear = Number(date.slice(0, 4));
     await ensureYears([newYear]);
 
@@ -2661,6 +2706,7 @@ function openAdd(dateISO, editId) {
       existing.roles = roles; existing.assign = assign;
       if (rdgV) existing.rdg = rdgV; else delete existing.rdg;
       existing.notes = noteV || null;
+      if (feastV) existing.feast = feastV; else delete existing.feast;
       existing.locked = true;
       App.services.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
       markDirty([...new Set([oldYear, newYear])]);
@@ -2674,6 +2720,7 @@ function openAdd(dateISO, editId) {
         date, time, name, roles, assign,
         ...(rdgV ? { rdg: rdgV } : {}),
         ...(noteV ? { notes: noteV } : {}),
+        ...(feastV ? { feast: feastV } : {}),
         locked: true, special: true,
       });
       App.services.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
