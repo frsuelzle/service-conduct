@@ -260,11 +260,18 @@
           padding-bottom:var(--sab)}
   .drawer .dhead{padding-top:calc(14px + var(--sat))}
   .drawer.open{transform:none}
-  .dlg{position:fixed;z-index:51;left:50%;top:calc(50% + (var(--sat) - var(--sab)) / 2);transform:translate(-50%,-50%);
+  .dlg{position:fixed;z-index:51;left:0;right:0;margin:0 auto;top:calc(var(--sat) + 12px);
        width:min(470px,calc(100% - 32px));background:var(--paper);border-radius:9px;
-       box-shadow:0 18px 46px rgba(22,24,31,.28);display:none;max-height:86vh;max-height:calc(100dvh - 28px - var(--sat) - var(--sab));
+       box-shadow:0 18px 46px rgba(22,24,31,.28);display:none;max-height:calc(100vh - 24px - var(--sat) - var(--sab));max-height:calc(100dvh - 24px - var(--sat) - var(--sab));
        overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
   .dlg.open{display:block}
+  @media (pointer:fine) and (min-height:560px){
+    .dlg{top:calc(50% + (var(--sat) - var(--sab)) / 2);transform:translateY(-50%);max-height:86vh}
+  }
+  /* Home Screen web app on a phone: never trust a zero safe-area; the clock and Dynamic Island are always there */
+  @media (display-mode:standalone) and (pointer:coarse) and (orientation:portrait) and (max-width:520px){
+    :root{--sat:max(env(safe-area-inset-top,0px),47px)}
+  }
   @media (pointer:coarse){
     .dlg input,.dlg select,.dlg textarea,.drawer input,.drawer select,.drawer textarea,
     .gate input,textarea.noteinput{font-size:16px!important}
@@ -460,6 +467,7 @@
 <div class="drawer" id="drawer" role="dialog" aria-label="Settings">
   <div class="dhead"><h3>Settings</h3><button data-close>&times;</button></div>
   <div class="dbody" id="setBody"></div>
+  <div style="padding:4px 17px 18px;font:11px/1.2 var(--font-mono,monospace);color:var(--mute)">Layout build: top-anchored dialogs v3</div>
 </div>
 
 <div class="dlg" id="dlg" role="dialog" aria-label="Dialog">
@@ -2419,10 +2427,13 @@ function undoDelete(snapshot) {
   probe2.style.cssText = 'position:fixed;left:-9px;top:0;width:1px;visibility:hidden;pointer-events:none;height:var(--sab)';
   document.body.appendChild(probe); document.body.appendChild(probe2);
   function fit() {
-    if (!vv || !dlg.classList.contains('open')) return;
+    if (!dlg.classList.contains('open')) return;
+    const kb = vv && (window.innerHeight - vv.height > 90 || vv.offsetTop > 1);
+    if (!kb) { dlg.style.top = ''; dlg.style.maxHeight = ''; return; }
     const sat = probe.offsetHeight, sab = probe2.offsetHeight;
-    const top = vv.offsetTop + sat + 12, bot = vv.offsetTop + vv.height - sab - 12;
-    dlg.style.top = ((top + bot) / 2) + 'px';
+    const top = vv.offsetTop + sat + 12, bot = vv.offsetTop + vv.height - 12;
+    dlg.style.transform = 'none';
+    dlg.style.top = top + 'px';
     dlg.style.maxHeight = Math.max(160, bot - top) + 'px';
   }
   function lockPage() {
@@ -2439,7 +2450,7 @@ function undoDelete(snapshot) {
     document.body.classList.remove('locked');
     document.body.style.top = '';
     document.documentElement.style.removeProperty('--lockY');
-    dlg.style.top = ''; dlg.style.maxHeight = '';
+    dlg.style.top = ''; dlg.style.maxHeight = ''; dlg.style.transform = '';
     window.scrollTo(0, y);
   }
   new MutationObserver(() => scrim.classList.contains('open') ? lockPage() : unlockPage())
