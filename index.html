@@ -248,16 +248,24 @@
              text-transform:uppercase;color:var(--mute-2)}
 
   /* ---------- drawer + dialog ---------- */
-  .scrim{position:fixed;inset:0;background:rgba(22,24,31,.42);z-index:50;display:none}
+  .scrim{position:fixed;inset:0;background:rgba(22,24,31,.42);z-index:50;display:none;touch-action:none}
+  /* while a dialog or drawer is open the page behind it is frozen (see lockPage) */
+  body.locked{position:fixed;left:0;right:0;width:100%}
+  body.locked .rail{position:relative;top:var(--lockY,0px)}
   .scrim.open{display:block}
   .drawer{position:fixed;top:0;right:0;bottom:0;width:min(400px,100%);background:var(--paper);
           z-index:51;transform:translateX(100%);transition:transform .22s ease;
-          overflow:auto;box-shadow:-8px 0 26px rgba(22,24,31,.16)}
+          overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;box-shadow:-8px 0 26px rgba(22,24,31,.16)}
   .drawer.open{transform:none}
   .dlg{position:fixed;z-index:51;left:50%;top:50%;transform:translate(-50%,-50%);
        width:min(470px,calc(100% - 32px));background:var(--paper);border-radius:9px;
-       box-shadow:0 18px 46px rgba(22,24,31,.28);display:none;max-height:86vh;overflow:auto}
+       box-shadow:0 18px 46px rgba(22,24,31,.28);display:none;max-height:86vh;max-height:calc(100dvh - 28px);
+       overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
   .dlg.open{display:block}
+  @media (pointer:coarse){
+    .dlg input,.dlg select,.dlg textarea,.drawer input,.drawer select,.drawer textarea,
+    .gate input,textarea.noteinput{font-size:16px!important}
+  }
   .dhead{display:flex;align-items:center;justify-content:space-between;padding:14px 17px;
          border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--paper)}
   .dhead h3{font-family:var(--font-display);font-weight:500;font-size:17px;margin:0}
@@ -2394,6 +2402,42 @@ function undoDelete(snapshot) {
   render();
   toast('Put back.');
 }
+
+/* ---------- keep the page still behind a dialog ----------
+   On iOS the page behind a dialog scrolls with a finger on the backdrop, or once the dialog's own
+   scroll reaches its end, and the on-screen keyboard can cover a dialog centred in the full screen.
+   So: freeze the page while the scrim is up (restoring its scroll position afterwards), and keep
+   the dialog inside the part of the screen that is actually visible. */
+(function () {
+  const scrim = el('scrim'), dlg = el('dlg'), vv = window.visualViewport;
+  let locked = false, y = 0;
+  function fit() {
+    if (!vv || !dlg.classList.contains('open')) return;
+    dlg.style.top = (vv.offsetTop + vv.height / 2) + 'px';
+    dlg.style.maxHeight = Math.max(160, vv.height - 24) + 'px';
+  }
+  function lockPage() {
+    if (locked) return;
+    locked = true; y = window.scrollY || document.documentElement.scrollTop || 0;
+    document.documentElement.style.setProperty('--lockY', y + 'px');
+    document.body.style.top = -y + 'px';
+    document.body.classList.add('locked');
+    fit();
+  }
+  function unlockPage() {
+    if (!locked) return;
+    locked = false;
+    document.body.classList.remove('locked');
+    document.body.style.top = '';
+    document.documentElement.style.removeProperty('--lockY');
+    dlg.style.top = ''; dlg.style.maxHeight = '';
+    window.scrollTo(0, y);
+  }
+  new MutationObserver(() => scrim.classList.contains('open') ? lockPage() : unlockPage())
+    .observe(scrim, { attributes: true, attributeFilter: ['class'] });
+  new MutationObserver(fit).observe(dlg, { attributes: true, attributeFilter: ['class'] });
+  if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
+})();
 
 /* ---------- dialogs ---------- */
 function closeAll() {
